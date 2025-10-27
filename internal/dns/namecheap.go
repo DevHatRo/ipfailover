@@ -2,7 +2,9 @@ package dns
 
 import (
 	"context"
+	"encoding/xml"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -100,10 +102,11 @@ func (n *NamecheapProvider) UpdateRecord(ctx context.Context, record interfaces.
 }
 
 // GetRecord retrieves an existing DNS record
-func (n *NamecheapProvider) GetRecord(ctx context.Context, name string) (*interfaces.DNSRecord, error) {
+func (n *NamecheapProvider) GetRecord(ctx context.Context, name string, rtype string) (*interfaces.DNSRecord, error) {
 	n.logger.Debug("getting DNS record",
 		zap.String("provider", "namecheap"),
 		zap.String("record", name),
+		zap.String("type", rtype),
 	)
 
 	records, err := n.listRecords(ctx)
@@ -112,8 +115,11 @@ func (n *NamecheapProvider) GetRecord(ctx context.Context, name string) (*interf
 	}
 
 	for _, record := range records {
-		if record.Name == name {
-			ttl, _ := strconv.Atoi(record.TTL)
+		if record.Name == name && record.Type == rtype {
+			ttl, err := strconv.Atoi(record.TTL)
+			if err != nil {
+				return nil, fmt.Errorf("parsing TTL for namecheap record %s: %w", record.ID, err)
+			}
 			return &interfaces.DNSRecord{
 				Name:     record.Name,
 				Type:     record.Type,
@@ -131,13 +137,14 @@ func (n *NamecheapProvider) GetRecord(ctx context.Context, name string) (*interf
 }
 
 // DeleteRecord deletes a DNS record
-func (n *NamecheapProvider) DeleteRecord(ctx context.Context, name string) error {
+func (n *NamecheapProvider) DeleteRecord(ctx context.Context, name, recordType string) error {
 	n.logger.Info("deleting DNS record",
 		zap.String("provider", "namecheap"),
 		zap.String("record", name),
+		zap.String("type", recordType),
 	)
 
-	record, err := n.findRecord(ctx, name, "")
+	record, err := n.findRecord(ctx, name, recordType)
 	if err != nil {
 		return errors.NewDNSProviderError("namecheap", name, err)
 	}
@@ -146,11 +153,16 @@ func (n *NamecheapProvider) DeleteRecord(ctx context.Context, name string) error
 		n.logger.Warn("record not found for deletion",
 			zap.String("provider", "namecheap"),
 			zap.String("record", name),
+			zap.String("type", recordType),
 		)
 		return nil // Record doesn't exist, consider it deleted
 	}
 
-	return n.deleteRecordByID(ctx, record.ID)
+	if err := n.deleteRecordByID(ctx, record.ID); err != nil {
+		return errors.NewDNSProviderError("namecheap", name, err)
+	}
+
+	return nil
 }
 
 // Validate checks if the provider configuration is valid
@@ -160,7 +172,7 @@ func (n *NamecheapProvider) Validate(ctx context.Context) error {
 	// Test API access by listing records
 	_, err := n.listRecords(ctx)
 	if err != nil {
-		return fmt.Errorf("Namecheap API validation failed: %w", err)
+		return fmt.Errorf("api validation failed: %w", err)
 	}
 
 	n.logger.Info("Namecheap provider validation successful")
@@ -208,17 +220,57 @@ func (n *NamecheapProvider) listRecords(ctx context.Context) ([]NamecheapDNSReco
 		return nil, errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("unexpected status code"))
 	}
 
-	// Parse XML response (simplified - in production you'd use xml.Decoder)
-	// For now, we'll return a mock response structure
-	// In a real implementation, you'd parse the XML properly
+	// Parse XML response
 	var apiResp NamecheapAPIResponse
+	decoder := xml.NewDecoder(resp.Body)
+	if err := decoder.Decode(&apiResp); err != nil {
+		return nil, fmt.Errorf("failed to parse XML response: %w", err)
+	}
 
 	// Check for API errors
 	if apiResp.CommandResponse.Error.Number != "" {
-		return nil, fmt.Errorf("Namecheap API error %s: %s", apiResp.CommandResponse.Error.Number, apiResp.CommandResponse.Error.Text)
+		return nil, fmt.Errorf("api error %s: %s", apiResp.CommandResponse.Error.Number, apiResp.CommandResponse.Error.Text)
 	}
 
 	return apiResp.CommandResponse.Data.Records, nil
+}
+
+// performNamecheapPOSTRequest performs a POST request to Namecheap API and parses the XML response
+func (n *NamecheapProvider) performNamecheapPOSTRequest(ctx context.Context, params url.Values, operation string) error {
+	req, err := http.NewRequestWithContext(ctx, "POST", n.baseURL, nil)
+	if err != nil {
+		return fmt.Errorf("failed to create request: %w", err)
+	}
+
+	req.URL.RawQuery = params.Encode()
+
+	resp, err := n.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("unexpected status code"))
+	}
+
+	// Parse XML response to check for API-level errors
+	var apiResp NamecheapAPIResponse
+	decoder := xml.NewDecoder(resp.Body)
+	if err := decoder.Decode(&apiResp); err != nil {
+		return fmt.Errorf("failed to parse XML response: %w", err)
+	}
+
+	// Check for API errors in the response
+	if apiResp.CommandResponse.Error.Number != "" {
+		return fmt.Errorf("api error %s: %s", apiResp.CommandResponse.Error.Number, apiResp.CommandResponse.Error.Text)
+	}
+
+	n.logger.Info(fmt.Sprintf("DNS record %s successfully", operation),
+		zap.String("provider", "namecheap"),
+	)
+
+	return nil
 }
 
 // updateExistingRecord updates an existing DNS record
@@ -236,21 +288,9 @@ func (n *NamecheapProvider) updateExistingRecord(ctx context.Context, recordID s
 	params.Set("Address", record.Value)
 	params.Set("TTL", strconv.Itoa(record.TTL))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", n.baseURL, nil)
+	err := n.performNamecheapPOSTRequest(ctx, params, "updated")
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.URL.RawQuery = params.Encode()
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("unexpected status code"))
+		return err
 	}
 
 	n.logger.Info("DNS record updated successfully",
@@ -276,21 +316,9 @@ func (n *NamecheapProvider) createNewRecord(ctx context.Context, record interfac
 	params.Set("Address", record.Value)
 	params.Set("TTL", strconv.Itoa(record.TTL))
 
-	req, err := http.NewRequestWithContext(ctx, "POST", n.baseURL, nil)
+	err := n.performNamecheapPOSTRequest(ctx, params, "created")
 	if err != nil {
-		return fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.URL.RawQuery = params.Encode()
-
-	resp, err := n.client.Do(req)
-	if err != nil {
-		return fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("unexpected status code"))
+		return err
 	}
 
 	n.logger.Info("DNS record created successfully",
@@ -327,6 +355,23 @@ func (n *NamecheapProvider) deleteRecordByID(ctx context.Context, recordID strin
 
 	if resp.StatusCode != http.StatusOK {
 		return errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("unexpected status code"))
+	}
+
+	// Read response body before closing
+	bodyBytes, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Parse XML response
+	var apiResp NamecheapAPIResponse
+	if err := xml.Unmarshal(bodyBytes, &apiResp); err != nil {
+		return fmt.Errorf("failed to parse XML response: %w", err)
+	}
+
+	// Check for API errors
+	if apiResp.CommandResponse.Error.Number != "" {
+		return errors.NewHTTPError(resp.StatusCode, n.baseURL, fmt.Errorf("api error %s: %s", apiResp.CommandResponse.Error.Number, apiResp.CommandResponse.Error.Text))
 	}
 
 	n.logger.Info("DNS record deleted successfully",

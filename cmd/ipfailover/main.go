@@ -4,6 +4,7 @@ import (
 	"context"
 	"flag"
 	"fmt"
+	"net"
 	"os"
 	"os/signal"
 	"syscall"
@@ -16,6 +17,7 @@ import (
 	"github.com/devhat/ipfailover/internal/state"
 	"github.com/devhat/ipfailover/pkg/errors"
 	"github.com/devhat/ipfailover/pkg/interfaces"
+	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -49,7 +51,7 @@ func (app *Application) HealthCheck() error {
 
 	// Check if state store is accessible
 	_, err = app.stateStore.GetLastAppliedIP(ctx)
-	if err != nil {
+	if err != nil && !errors.IsNotFoundError(err) {
 		return fmt.Errorf("state store check failed: %w", err)
 	}
 
@@ -182,7 +184,7 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 	app.metrics.SetCurrentIP(currentIP)
 
 	// Store check information
-	if err := app.stateStore.SetLastCheckInfo(ctx, currentIP); err != nil {
+	if err := app.stateStore.SetLastCheckInfo(ctx, currentIP, time.Now()); err != nil {
 		app.logger.Warn("failed to store check info", zap.Error(err))
 	}
 
@@ -213,7 +215,7 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 
 	// Update state
 	if err := app.stateStore.SetLastAppliedIP(ctx, targetIP); err != nil {
-		app.logger.Error("failed to update state", zap.Error(err))
+		return fmt.Errorf("failed to update state: %w", err)
 	}
 
 	app.metrics.SetLastChangeTime(time.Now())
@@ -226,32 +228,54 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 	return nil
 }
 
-// determineTargetIP determines which IP should be used based on current IP
+// determineTargetIP determines which IP should be used based on active reachability check
 func (app *Application) determineTargetIP(currentIP string) string {
-	if currentIP == app.config.PrimaryIP {
+	// Create a context with a short timeout for reachability checks
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Try to reach the primary IP first
+	err := app.checkIPReachability(ctx, app.config.PrimaryIP)
+	if err == nil {
+		app.logger.Debug("Primary IP is reachable, using primary",
+			zap.String("primary_ip", app.config.PrimaryIP),
+		)
 		return app.config.PrimaryIP
 	}
-	if currentIP == app.config.SecondaryIP {
-		return app.config.SecondaryIP
-	}
 
-	// If current IP doesn't match either configured IP, use primary as default
-	app.logger.Warn("current IP doesn't match configured IPs, using primary",
-		zap.String("current_ip", currentIP),
+	// Primary is unreachable, log warning and fall back to secondary
+	app.logger.Warn("Primary IP is unreachable, falling back to secondary",
 		zap.String("primary_ip", app.config.PrimaryIP),
 		zap.String("secondary_ip", app.config.SecondaryIP),
+		zap.Error(err),
 	)
-	return app.config.PrimaryIP
+	return app.config.SecondaryIP
+}
+
+// checkIPReachability attempts to verify connectivity to the given IP address
+func (app *Application) checkIPReachability(ctx context.Context, ip string) error {
+	// Try to establish a TCP connection to a common port (80 for HTTP)
+	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "80"), 3*time.Second)
+	if err != nil {
+		return fmt.Errorf("failed to connect to %s:80: %w", ip, err)
+	}
+	defer conn.Close()
+
+	// Connection successful
+	return nil
 }
 
 // updateDNSRecords updates all configured DNS records
 func (app *Application) updateDNSRecords(ctx context.Context, targetIP string) error {
+	var errs error
+
 	for _, dnsConfig := range app.config.DNS {
 		provider, exists := app.dnsProviders[dnsConfig.Name]
 		if !exists {
 			app.logger.Error("DNS provider not found",
 				zap.String("record", dnsConfig.Name),
 			)
+			errs = multierr.Append(errs, fmt.Errorf("DNS provider not found for record %s", dnsConfig.Name))
 			continue
 		}
 
@@ -272,7 +296,8 @@ func (app *Application) updateDNSRecords(ctx context.Context, targetIP string) e
 				zap.String("ip", targetIP),
 				zap.Error(err),
 			)
-			return err
+			errs = multierr.Append(errs, fmt.Errorf("failed to update DNS record %s with provider %s: %w", dnsConfig.Name, dnsConfig.Provider, err))
+			continue
 		}
 
 		app.metrics.IncrementDNSUpdates(dnsConfig.Provider, dnsConfig.Name)
@@ -283,7 +308,7 @@ func (app *Application) updateDNSRecords(ctx context.Context, targetIP string) e
 		)
 	}
 
-	return nil
+	return errs
 }
 
 // getVersion returns the application version

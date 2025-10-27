@@ -13,6 +13,11 @@ import (
 	"go.uber.org/zap"
 )
 
+const (
+	userAgent   = "ipfailover/1.0"
+	maxBodySize = 4096 // 4KB limit for response body
+)
+
 // HTTPChecker implements IPChecker using HTTP endpoints
 type HTTPChecker struct {
 	client    *http.Client
@@ -79,7 +84,7 @@ func (h *HTTPChecker) checkEndpoint(ctx context.Context, endpoint string) (strin
 	}
 
 	// Set user agent to identify our requests
-	req.Header.Set("User-Agent", "ipfailover/1.0")
+	req.Header.Set("User-Agent", userAgent)
 
 	resp, err := h.client.Do(req)
 	if err != nil {
@@ -91,9 +96,14 @@ func (h *HTTPChecker) checkEndpoint(ctx context.Context, endpoint string) (strin
 		return "", errors.NewHTTPError(resp.StatusCode, endpoint, fmt.Errorf("unexpected status code"))
 	}
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxBodySize))
 	if err != nil {
 		return "", fmt.Errorf("failed to read response body: %w", err)
+	}
+
+	// Check if we hit the size limit
+	if len(body) == maxBodySize {
+		return "", fmt.Errorf("response body exceeds maximum size limit of %d bytes", maxBodySize)
 	}
 
 	ip := strings.TrimSpace(string(body))

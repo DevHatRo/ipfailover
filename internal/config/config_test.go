@@ -363,3 +363,72 @@ func TestCPanelConfig_Validate(t *testing.T) {
 		assert.Contains(t, err.Error(), "zone is required")
 	})
 }
+
+func TestConfig_String_Methods(t *testing.T) {
+	t.Run("CloudflareConfig redacts sensitive data", func(t *testing.T) {
+		cfg := &config.CloudflareConfig{
+			APIToken: "secret-token-12345",
+			ZoneID:   "zone-id-123",
+			Proxied:  true,
+		}
+
+		result := cfg.String()
+		assert.Contains(t, result, "[REDACTED]")
+		assert.Contains(t, result, "zone-id-123")
+		assert.Contains(t, result, "Proxied:true")
+		assert.NotContains(t, result, "secret-token-12345")
+	})
+
+	t.Run("CPanelConfig redacts sensitive data", func(t *testing.T) {
+		cfg := &config.CPanelConfig{
+			BaseURL:  "https://cpanel.example.com",
+			Username: "testuser",
+			APIToken: "secret-api-token",
+			Zone:     "example.com",
+		}
+
+		result := cfg.String()
+		assert.Contains(t, result, "[REDACTED]")
+		assert.Contains(t, result, "https://cpanel.example.com")
+		assert.Contains(t, result, "testuser")
+		assert.Contains(t, result, "example.com")
+		assert.NotContains(t, result, "secret-api-token")
+	})
+
+	t.Run("Route53Config redacts sensitive data", func(t *testing.T) {
+		cfg := &config.Route53Config{
+			AccessKeyID:     "AKIAIOSFODNN7EXAMPLE",
+			SecretAccessKey: "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY",
+			Region:          "us-east-1",
+			HostedZoneID:    "Z123456789",
+		}
+
+		result := cfg.String()
+		// Should contain two [REDACTED] for AccessKeyID and SecretAccessKey
+		assert.Contains(t, result, "[REDACTED]")
+		assert.Contains(t, result, "us-east-1")
+		assert.Contains(t, result, "Z123456789")
+		assert.NotContains(t, result, "AKIAIOSFODNN7EXAMPLE")
+		assert.NotContains(t, result, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
+	})
+
+	t.Run("NamecheapConfig redacts sensitive data", func(t *testing.T) {
+		cfg := &config.NamecheapConfig{
+			APIUser:  "testuser",
+			APIToken: "secret-token",
+			Username: "username",
+			ClientIP: "192.168.1.1",
+			Domain:   "example.com",
+			Sandbox:  true,
+		}
+
+		result := cfg.String()
+		assert.Contains(t, result, "[REDACTED]")
+		assert.Contains(t, result, "testuser")
+		assert.Contains(t, result, "username")
+		assert.Contains(t, result, "example.com")
+		assert.Contains(t, result, "Sandbox:true")
+		assert.NotContains(t, result, "secret-token")
+		assert.NotContains(t, result, "192.168.1.1")
+	})
+}

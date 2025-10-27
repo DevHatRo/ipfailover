@@ -1,7 +1,8 @@
 [Unit]
 Description=IP Failover Daemon
 Documentation=https://github.com/devhat/ipfailover
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 Type=simple
@@ -9,14 +10,16 @@ User=ipfailover
 Group=ipfailover
 ExecStart=/usr/local/bin/ipfailover /etc/ipfailover/config.yaml
 ExecReload=/bin/kill -HUP $MAINPID
-Restart=always
+Restart=on-failure
 RestartSec=5
 StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=ipfailover
 
 # Security settings
-NoNewPrivileges=true
+NoNewPrivileges=no
+CapabilityBoundingSet=CAP_NET_ADMIN
+AmbientCapabilities=CAP_NET_ADMIN
 PrivateTmp=true
 ProtectSystem=strict
 ProtectHome=true

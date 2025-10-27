@@ -2,7 +2,9 @@ package metrics
 
 import (
 	"context"
+	"net"
 	"net/http"
+	"sync"
 	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
@@ -12,6 +14,7 @@ import (
 
 // PrometheusCollector implements MetricsCollector using Prometheus
 type PrometheusCollector struct {
+	registry           *prometheus.Registry
 	ipChecksTotal      prometheus.Counter
 	ipCheckErrorsTotal prometheus.Counter
 	dnsUpdatesTotal    *prometheus.CounterVec
@@ -23,7 +26,11 @@ type PrometheusCollector struct {
 
 // NewPrometheusCollector creates a new Prometheus metrics collector
 func NewPrometheusCollector(logger *zap.Logger) *PrometheusCollector {
+	// Create a dedicated registry for this collector instance
+	registry := prometheus.NewRegistry()
+
 	pc := &PrometheusCollector{
+		registry: registry,
 		ipChecksTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "ipfailover_checks_total",
 			Help: "Total number of IP checks performed",
@@ -51,8 +58,8 @@ func NewPrometheusCollector(logger *zap.Logger) *PrometheusCollector {
 		logger: logger,
 	}
 
-	// Register metrics with Prometheus
-	prometheus.MustRegister(
+	// Register metrics with the dedicated registry
+	registry.MustRegister(
 		pc.ipChecksTotal,
 		pc.ipCheckErrorsTotal,
 		pc.dnsUpdatesTotal,
@@ -117,11 +124,28 @@ func (pc *PrometheusCollector) SetLastChangeTime(t time.Time) {
 // StartMetricsServer starts the Prometheus metrics HTTP server
 func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr string) error {
 	mux := http.NewServeMux()
-	mux.Handle("/metrics", promhttp.Handler())
+	mux.Handle("/metrics", promhttp.HandlerFor(pc.registry, promhttp.HandlerOpts{}))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
-		w.Write([]byte("OK"))
+		if _, err := w.Write([]byte("OK")); err != nil {
+			pc.logger.Error("failed to write health response",
+				zap.Error(err),
+			)
+			// Try to write error response if possible
+			w.WriteHeader(http.StatusInternalServerError)
+			w.Write([]byte("Internal Server Error"))
+		}
 	})
+
+	// Create listener first to detect startup issues early
+	listener, err := net.Listen("tcp", addr)
+	if err != nil {
+		pc.logger.Error("failed to create listener",
+			zap.String("addr", addr),
+			zap.Error(err),
+		)
+		return err
+	}
 
 	server := &http.Server{
 		Addr:    addr,
@@ -132,35 +156,65 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 		zap.String("addr", addr),
 	)
 
+	// Channel to receive server errors
+	errCh := make(chan error, 1)
+
 	// Start server in goroutine
 	go func() {
-		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+		errCh <- server.Serve(listener)
+	}()
+
+	// Wait for context cancellation or server error
+	select {
+	case err := <-errCh:
+		// Server error occurred
+		if err != nil && err != http.ErrServerClosed {
 			pc.logger.Error("metrics server error",
 				zap.Error(err),
 			)
+			return err
 		}
-	}()
+		return nil
+	case <-ctx.Done():
+		// Context cancelled, shutdown server
+		pc.logger.Info("shutting down metrics server")
 
-	// Wait for context cancellation
-	<-ctx.Done()
+		// Shutdown server with timeout
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
 
-	pc.logger.Info("shutting down metrics server")
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			pc.logger.Error("failed to shutdown metrics server",
+				zap.Error(err),
+			)
+			return err
+		}
 
-	// Shutdown server with timeout
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
+		// Wait for server goroutine to finish
+		select {
+		case err := <-errCh:
+			if err != nil && err != http.ErrServerClosed {
+				return err
+			}
+		case <-time.After(6 * time.Second):
+			pc.logger.Warn("server shutdown timeout exceeded")
+		}
 
-	return server.Shutdown(shutdownCtx)
+		return nil
+	}
 }
 
 // MockCollector implements MetricsCollector for testing
 type MockCollector struct {
+	mu                 sync.RWMutex
 	ipChecksCount      int
 	ipCheckErrorsCount int
 	dnsUpdatesCount    map[string]int // "provider:record" -> count
 	dnsErrorsCount     map[string]int // "provider:record" -> count
 	currentIP          string
 	lastChangeTime     time.Time
+	// Note: Consider using a struct key type instead of "provider:record" string
+	// to avoid potential delimiter collisions in provider/record names
 }
 
 // NewMockCollector creates a new mock metrics collector
@@ -173,64 +227,94 @@ func NewMockCollector() *MockCollector {
 
 // IncrementIPChecks increments the IP checks counter
 func (m *MockCollector) IncrementIPChecks() {
+	m.mu.Lock()
 	m.ipChecksCount++
+	m.mu.Unlock()
 }
 
 // IncrementIPCheckErrors increments the IP check errors counter
 func (m *MockCollector) IncrementIPCheckErrors() {
+	m.mu.Lock()
 	m.ipCheckErrorsCount++
+	m.mu.Unlock()
 }
 
 // IncrementDNSUpdates increments the DNS updates counter
 func (m *MockCollector) IncrementDNSUpdates(provider, record string) {
 	key := provider + ":" + record
+	m.mu.Lock()
 	m.dnsUpdatesCount[key]++
+	m.mu.Unlock()
 }
 
 // IncrementDNSErrors increments the DNS update errors counter
 func (m *MockCollector) IncrementDNSErrors(provider, record string) {
 	key := provider + ":" + record
+	m.mu.Lock()
 	m.dnsErrorsCount[key]++
+	m.mu.Unlock()
 }
 
 // SetCurrentIP sets the current IP gauge
 func (m *MockCollector) SetCurrentIP(ip string) {
+	m.mu.Lock()
 	m.currentIP = ip
+	m.mu.Unlock()
 }
 
 // SetLastChangeTime sets the last change timestamp
 func (m *MockCollector) SetLastChangeTime(t time.Time) {
+	m.mu.Lock()
 	m.lastChangeTime = t
+	m.mu.Unlock()
 }
 
 // GetIPChecksCount returns the IP checks count
 func (m *MockCollector) GetIPChecksCount() int {
-	return m.ipChecksCount
+	m.mu.RLock()
+	count := m.ipChecksCount
+	m.mu.RUnlock()
+	return count
 }
 
 // GetIPCheckErrorsCount returns the IP check errors count
 func (m *MockCollector) GetIPCheckErrorsCount() int {
-	return m.ipCheckErrorsCount
+	m.mu.RLock()
+	count := m.ipCheckErrorsCount
+	m.mu.RUnlock()
+	return count
 }
 
 // GetDNSUpdatesCount returns the DNS updates count for a provider and record
 func (m *MockCollector) GetDNSUpdatesCount(provider, record string) int {
 	key := provider + ":" + record
-	return m.dnsUpdatesCount[key]
+	m.mu.RLock()
+	count := m.dnsUpdatesCount[key]
+	m.mu.RUnlock()
+	return count
 }
 
 // GetDNSErrorsCount returns the DNS errors count for a provider and record
 func (m *MockCollector) GetDNSErrorsCount(provider, record string) int {
 	key := provider + ":" + record
-	return m.dnsErrorsCount[key]
+	m.mu.RLock()
+	count := m.dnsErrorsCount[key]
+	m.mu.RUnlock()
+	return count
 }
 
 // GetCurrentIP returns the current IP
 func (m *MockCollector) GetCurrentIP() string {
-	return m.currentIP
+	m.mu.RLock()
+	ip := m.currentIP
+	m.mu.RUnlock()
+	return ip
 }
 
 // GetLastChangeTime returns the last change time
 func (m *MockCollector) GetLastChangeTime() time.Time {
-	return m.lastChangeTime
+	m.mu.RLock()
+	t := m.lastChangeTime
+	m.mu.RUnlock()
+	return t
 }

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/devhat/ipfailover/internal/state"
+	"github.com/devhat/ipfailover/pkg/errors"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.uber.org/zap"
@@ -24,7 +25,8 @@ func TestFileStateStore_GetLastAppliedIP(t *testing.T) {
 
 		ip, err := store.GetLastAppliedIP(context.Background())
 
-		assert.NoError(t, err)
+		assert.Error(t, err)
+		assert.True(t, errors.IsNotFoundError(err))
 		assert.Empty(t, ip)
 	})
 
@@ -94,13 +96,14 @@ func TestFileStateStore_SetLastCheckInfo(t *testing.T) {
 	logger := zap.NewNop()
 	store := state.NewFileStateStore(stateFile, logger)
 
-	err := store.SetLastCheckInfo(context.Background(), "198.51.100.77")
+	testTime := time.Now()
+	err := store.SetLastCheckInfo(context.Background(), "198.51.100.77", testTime)
 	assert.NoError(t, err)
 
 	ip, checkTime, err := store.GetLastCheckInfo(context.Background())
 	assert.NoError(t, err)
 	assert.Equal(t, "198.51.100.77", ip)
-	assert.True(t, time.Since(checkTime) < time.Second)
+	assert.Equal(t, testTime.Unix(), checkTime.Unix()) // Compare Unix timestamps to avoid precision issues
 }
 
 func TestFileStateStore_GetUpdateCount(t *testing.T) {
@@ -176,13 +179,14 @@ func TestMockStateStore(t *testing.T) {
 
 	t.Run("SetLastCheckInfo", func(t *testing.T) {
 		store := state.NewMockStateStore()
-		err := store.SetLastCheckInfo(context.Background(), "198.51.100.77")
+		testTime := time.Now()
+		err := store.SetLastCheckInfo(context.Background(), "198.51.100.77", testTime)
 		assert.NoError(t, err)
 
 		ip, checkTime, err := store.GetLastCheckInfo(context.Background())
 		assert.NoError(t, err)
 		assert.Equal(t, "198.51.100.77", ip)
-		assert.True(t, time.Since(checkTime) < time.Second)
+		assert.Equal(t, testTime.Unix(), checkTime.Unix()) // Compare Unix timestamps to avoid precision issues
 	})
 
 	t.Run("GetUpdateCount", func(t *testing.T) {
@@ -209,7 +213,7 @@ func TestFileStateStore_CorruptedFile(t *testing.T) {
 	logger := zap.NewNop()
 	store := state.NewFileStateStore(stateFile, logger)
 
-	// Should handle corrupted file gracefully
+	// Should handle corrupted file gracefully by creating new state
 	err := store.SetLastAppliedIP(context.Background(), "203.0.113.10")
 	assert.NoError(t, err)
 

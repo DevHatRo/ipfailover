@@ -68,18 +68,25 @@ func (r *Route53Provider) UpdateRecord(ctx context.Context, record interfaces.DN
 
 	if existingRecord != nil {
 		// Update existing record
-		return r.updateExistingRecord(ctx, existingRecord, record)
+		if err := r.updateExistingRecord(ctx, existingRecord, record); err != nil {
+			return errors.NewDNSProviderError("route53", record.Name, err)
+		}
+		return nil
 	}
 
 	// Create new record
-	return r.createNewRecord(ctx, record)
+	if err := r.createNewRecord(ctx, record); err != nil {
+		return errors.NewDNSProviderError("route53", record.Name, err)
+	}
+	return nil
 }
 
 // GetRecord retrieves an existing DNS record
-func (r *Route53Provider) GetRecord(ctx context.Context, name string) (*interfaces.DNSRecord, error) {
+func (r *Route53Provider) GetRecord(ctx context.Context, name string, rtype string) (*interfaces.DNSRecord, error) {
 	r.logger.Debug("getting DNS record",
 		zap.String("provider", "route53"),
 		zap.String("record", name),
+		zap.String("type", rtype),
 	)
 
 	records, err := r.listRecords(ctx)
@@ -88,21 +95,37 @@ func (r *Route53Provider) GetRecord(ctx context.Context, name string) (*interfac
 	}
 
 	for _, record := range records {
-		if *record.Name == name {
+		// Skip records where record.Name is nil
+		if record.Name == nil {
+			continue
+		}
+
+		if *record.Name == name && string(record.Type) == rtype {
 			var value string
-			if len(record.ResourceRecords) > 0 {
+			// Only access record.ResourceRecords[0] if len > 0 and record.ResourceRecords[0].Value != nil
+			if len(record.ResourceRecords) > 0 && record.ResourceRecords[0].Value != nil {
 				value = *record.ResourceRecords[0].Value
+			}
+
+			// Verify record.TTL != nil before converting to int and default to 0 if nil
+			var ttl int
+			if record.TTL != nil {
+				ttl = int(*record.TTL)
+			}
+
+			// Ensure Metadata map uses only non-nil values with fallbacks
+			metadata := make(map[string]string)
+			if record.Name != nil {
+				metadata["route53_id"] = *record.Name
 			}
 
 			return &interfaces.DNSRecord{
 				Name:     *record.Name,
 				Type:     string(record.Type),
 				Value:    value,
-				TTL:      int(*record.TTL),
+				TTL:      ttl,
 				Provider: "route53",
-				Metadata: map[string]string{
-					"route53_id": *record.Name,
-				},
+				Metadata: metadata,
 			}, nil
 		}
 	}
@@ -111,13 +134,14 @@ func (r *Route53Provider) GetRecord(ctx context.Context, name string) (*interfac
 }
 
 // DeleteRecord deletes a DNS record
-func (r *Route53Provider) DeleteRecord(ctx context.Context, name string) error {
+func (r *Route53Provider) DeleteRecord(ctx context.Context, name, recordType string) error {
 	r.logger.Info("deleting DNS record",
 		zap.String("provider", "route53"),
 		zap.String("record", name),
+		zap.String("type", recordType),
 	)
 
-	record, err := r.findRecord(ctx, name, "")
+	record, err := r.findRecord(ctx, name, recordType)
 	if err != nil {
 		return errors.NewDNSProviderError("route53", name, err)
 	}
@@ -126,11 +150,16 @@ func (r *Route53Provider) DeleteRecord(ctx context.Context, name string) error {
 		r.logger.Warn("record not found for deletion",
 			zap.String("provider", "route53"),
 			zap.String("record", name),
+			zap.String("type", recordType),
 		)
 		return nil // Record doesn't exist, consider it deleted
 	}
 
-	return r.deleteRecord(ctx, record)
+	if err := r.deleteRecord(ctx, record); err != nil {
+		return errors.NewDNSProviderError("route53", name, err)
+	}
+
+	return nil
 }
 
 // Validate checks if the provider configuration is valid
@@ -142,7 +171,7 @@ func (r *Route53Provider) Validate(ctx context.Context) error {
 		Id: aws.String(r.config.HostedZoneID),
 	})
 	if err != nil {
-		return fmt.Errorf("Route53 API validation failed: %w", err)
+		return errors.NewDNSProviderError("route53", "validation", err)
 	}
 
 	r.logger.Info("Route53 provider validation successful")
@@ -157,8 +186,9 @@ func (r *Route53Provider) findRecord(ctx context.Context, name, recordType strin
 	}
 
 	for _, record := range records {
-		if *record.Name == name && (recordType == "" || string(record.Type) == recordType) {
-			return &record, nil
+		if record.Name != nil && *record.Name == name && (recordType == "" || string(record.Type) == recordType) {
+			rec := record
+			return &rec, nil
 		}
 	}
 
@@ -195,18 +225,44 @@ func (r *Route53Provider) listRecords(ctx context.Context) ([]types.ResourceReco
 
 // updateExistingRecord updates an existing DNS record
 func (r *Route53Provider) updateExistingRecord(ctx context.Context, existingRecord *types.ResourceRecordSet, record interfaces.DNSRecord) error {
-	change := types.Change{
-		Action: types.ChangeActionUpsert,
-		ResourceRecordSet: &types.ResourceRecordSet{
-			Name: aws.String(record.Name),
-			Type: types.RRType(record.Type),
-			TTL:  aws.Int64(int64(record.TTL)),
-			ResourceRecords: []types.ResourceRecord{
-				{
-					Value: aws.String(record.Value),
-				},
+	// Create new ResourceRecordSet preserving routing properties from existing record
+	newRecordSet := &types.ResourceRecordSet{
+		Name: aws.String(record.Name),
+		Type: types.RRType(record.Type),
+		TTL:  aws.Int64(int64(record.TTL)),
+		ResourceRecords: []types.ResourceRecord{
+			{
+				Value: aws.String(record.Value),
 			},
 		},
+	}
+
+	// Preserve routing properties from existing record
+	if existingRecord.SetIdentifier != nil {
+		newRecordSet.SetIdentifier = existingRecord.SetIdentifier
+	}
+	if existingRecord.Weight != nil {
+		newRecordSet.Weight = existingRecord.Weight
+	}
+	if existingRecord.HealthCheckId != nil {
+		newRecordSet.HealthCheckId = existingRecord.HealthCheckId
+	}
+	if existingRecord.TrafficPolicyInstanceId != nil {
+		newRecordSet.TrafficPolicyInstanceId = existingRecord.TrafficPolicyInstanceId
+	}
+	if existingRecord.Region != "" {
+		newRecordSet.Region = existingRecord.Region
+	}
+	if existingRecord.Failover != "" {
+		newRecordSet.Failover = existingRecord.Failover
+	}
+	if existingRecord.MultiValueAnswer != nil {
+		newRecordSet.MultiValueAnswer = existingRecord.MultiValueAnswer
+	}
+
+	change := types.Change{
+		Action:            types.ChangeActionUpsert,
+		ResourceRecordSet: newRecordSet,
 	}
 
 	input := &route53.ChangeResourceRecordSetsInput{

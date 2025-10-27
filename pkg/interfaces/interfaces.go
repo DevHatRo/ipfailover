@@ -24,10 +24,10 @@ type DNSProvider interface {
 	UpdateRecord(ctx context.Context, record DNSRecord) error
 
 	// GetRecord retrieves an existing DNS record
-	GetRecord(ctx context.Context, name string) (*DNSRecord, error)
+	GetRecord(ctx context.Context, name string, rtype string) (*DNSRecord, error)
 
 	// DeleteRecord deletes a DNS record
-	DeleteRecord(ctx context.Context, name string) error
+	DeleteRecord(ctx context.Context, name, recordType string) error
 
 	// Validate checks if the provider configuration is valid
 	Validate(ctx context.Context) error
@@ -57,7 +57,7 @@ type StateStore interface {
 	SetLastChangeTime(ctx context.Context, t time.Time) error
 
 	// SetLastCheckInfo stores information about the last IP check
-	SetLastCheckInfo(ctx context.Context, ip string) error
+	SetLastCheckInfo(ctx context.Context, ip string, t time.Time) error
 
 	// GetLastCheckInfo returns information about the last IP check
 	GetLastCheckInfo(ctx context.Context) (string, time.Time, error)

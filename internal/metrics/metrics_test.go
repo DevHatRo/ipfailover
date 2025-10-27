@@ -27,10 +27,32 @@ func TestPrometheusCollector(t *testing.T) {
 	assert.NotNil(t, collector)
 }
 
-func TestMockCollector(t *testing.T) {
-	collector := metrics.NewMockCollector()
+func TestPrometheusCollector_MultipleInstances(t *testing.T) {
+	logger := zap.NewNop()
 
+	// Create multiple instances to ensure no panic on duplicate registrations
+	collector1 := metrics.NewPrometheusCollector(logger)
+	collector2 := metrics.NewPrometheusCollector(logger)
+	collector3 := metrics.NewPrometheusCollector(logger)
+
+	// Test that all instances work independently
+	collector1.IncrementIPChecks()
+	collector2.IncrementIPChecks()
+	collector3.IncrementIPChecks()
+
+	collector1.IncrementDNSUpdates("cloudflare", "example.com")
+	collector2.IncrementDNSUpdates("route53", "api.example.com")
+	collector3.IncrementDNSUpdates("namecheap", "backup.example.com")
+
+	// If we get here without panicking, the fix works
+	assert.NotNil(t, collector1)
+	assert.NotNil(t, collector2)
+	assert.NotNil(t, collector3)
+}
+
+func TestMockCollector(t *testing.T) {
 	t.Run("IncrementIPChecks", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		collector.IncrementIPChecks()
 		collector.IncrementIPChecks()
 
@@ -38,6 +60,7 @@ func TestMockCollector(t *testing.T) {
 	})
 
 	t.Run("IncrementIPCheckErrors", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		collector.IncrementIPCheckErrors()
 		collector.IncrementIPCheckErrors()
 		collector.IncrementIPCheckErrors()
@@ -46,6 +69,7 @@ func TestMockCollector(t *testing.T) {
 	})
 
 	t.Run("IncrementDNSUpdates", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		collector.IncrementDNSUpdates("cloudflare", "example.com")
 		collector.IncrementDNSUpdates("cloudflare", "api.example.com")
 		collector.IncrementDNSUpdates("cpanel", "backup.example.com")
@@ -56,6 +80,7 @@ func TestMockCollector(t *testing.T) {
 	})
 
 	t.Run("IncrementDNSErrors", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		collector.IncrementDNSErrors("cloudflare", "example.com")
 		collector.IncrementDNSErrors("cloudflare", "example.com")
 
@@ -63,6 +88,7 @@ func TestMockCollector(t *testing.T) {
 	})
 
 	t.Run("SetCurrentIP", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		collector.SetCurrentIP("203.0.113.10")
 		assert.Equal(t, "203.0.113.10", collector.GetCurrentIP())
 
@@ -71,6 +97,7 @@ func TestMockCollector(t *testing.T) {
 	})
 
 	t.Run("SetLastChangeTime", func(t *testing.T) {
+		collector := metrics.NewMockCollector()
 		now := time.Now()
 		collector.SetLastChangeTime(now)
 

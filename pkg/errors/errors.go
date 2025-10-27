@@ -1,6 +1,7 @@
 package errors
 
 import (
+	stderrors "errors"
 	"fmt"
 )
 
@@ -81,19 +82,28 @@ func (e *HTTPError) Unwrap() error {
 
 // IsRetryableError checks if an error is retryable
 func IsRetryableError(err error) bool {
-	switch e := err.(type) {
-	case *HTTPError:
+	// Check for HTTPError - unwraps if wrapped
+	var httpErr *HTTPError
+	if stderrors.As(err, &httpErr) {
 		// Retry on 5xx errors and some 4xx errors
-		return e.StatusCode >= 500 || e.StatusCode == 429 || e.StatusCode == 408
-	case *DNSProviderError:
+		return httpErr.StatusCode >= 500 || httpErr.StatusCode == 429 || httpErr.StatusCode == 408
+	}
+
+	// Check for DNSProviderError - unwraps if wrapped
+	var dnsErr *DNSProviderError
+	if stderrors.As(err, &dnsErr) {
 		// DNS provider errors are generally retryable
 		return true
-	case *IPCheckError:
+	}
+
+	// Check for IPCheckError - unwraps if wrapped
+	var ipErr *IPCheckError
+	if stderrors.As(err, &ipErr) {
 		// IP check errors are generally retryable
 		return true
-	default:
-		return false
 	}
+
+	return false
 }
 
 // NewHTTPError creates a new HTTP error
@@ -137,4 +147,35 @@ func NewStateError(operation string, err error) *StateError {
 		Operation: operation,
 		Err:       err,
 	}
+}
+
+// NotFoundError represents a "not found" error
+type NotFoundError struct {
+	Resource string
+	Err      error
+}
+
+func (e *NotFoundError) Error() string {
+	if e.Resource != "" {
+		return fmt.Sprintf("resource not found: %s: %v", e.Resource, e.Err)
+	}
+	return fmt.Sprintf("not found: %v", e.Err)
+}
+
+func (e *NotFoundError) Unwrap() error {
+	return e.Err
+}
+
+// NewNotFoundError creates a new not found error
+func NewNotFoundError(resource string, err error) *NotFoundError {
+	return &NotFoundError{
+		Resource: resource,
+		Err:      err,
+	}
+}
+
+// IsNotFoundError checks if an error is a not found error
+func IsNotFoundError(err error) bool {
+	_, ok := err.(*NotFoundError)
+	return ok
 }

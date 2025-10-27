@@ -23,9 +23,19 @@ type CloudflareProvider struct {
 
 // CloudflareAPIResponse represents a Cloudflare API response
 type CloudflareAPIResponse struct {
-	Success bool                  `json:"success"`
-	Errors  []CloudflareError     `json:"errors"`
-	Result  []CloudflareDNSRecord `json:"result"`
+	Success    bool                  `json:"success"`
+	Errors     []CloudflareError     `json:"errors"`
+	Result     []CloudflareDNSRecord `json:"result"`
+	ResultInfo CloudflareResultInfo  `json:"result_info"`
+}
+
+// CloudflareResultInfo contains pagination information
+type CloudflareResultInfo struct {
+	Page       int `json:"page"`
+	PerPage    int `json:"per_page"`
+	Count      int `json:"count"`
+	TotalCount int `json:"total_count"`
+	TotalPages int `json:"total_pages"`
 }
 
 // CloudflareError represents a Cloudflare API error
@@ -46,12 +56,19 @@ type CloudflareDNSRecord struct {
 
 // NewCloudflareProvider creates a new Cloudflare DNS provider
 func NewCloudflareProvider(cfg *config.CloudflareConfig, logger *zap.Logger) *CloudflareProvider {
+	if cfg == nil {
+		if logger != nil {
+			logger.Error("cloudflare config is nil")
+		}
+		return nil
+	}
+
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
 			MaxIdleConns:       10,
 			IdleConnTimeout:    30 * time.Second,
-			DisableCompression: true,
+			DisableCompression: false,
 		},
 	}
 
@@ -92,44 +109,47 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 }
 
 // GetRecord retrieves an existing DNS record
-func (c *CloudflareProvider) GetRecord(ctx context.Context, name string) (*interfaces.DNSRecord, error) {
+// Uses efficient API filtering by both name and type
+func (c *CloudflareProvider) GetRecord(ctx context.Context, name string, rtype string) (*interfaces.DNSRecord, error) {
 	c.logger.Debug("getting DNS record",
 		zap.String("provider", "cloudflare"),
 		zap.String("record", name),
+		zap.String("type", rtype),
 	)
 
-	records, err := c.listRecords(ctx)
+	records, err := c.getRecordsByNameAndType(ctx, name, rtype)
 	if err != nil {
 		return nil, errors.NewDNSProviderError("cloudflare", name, err)
 	}
 
-	for _, record := range records {
-		if record.Name == name {
-			return &interfaces.DNSRecord{
-				Name:     record.Name,
-				Type:     record.Type,
-				Value:    record.Content,
-				TTL:      record.TTL,
-				Provider: "cloudflare",
-				Metadata: map[string]string{
-					"cloudflare_id": record.ID,
-					"proxied":       fmt.Sprintf("%t", record.Proxied),
-				},
-			}, nil
-		}
+	if len(records) == 0 {
+		return nil, nil // Record not found
 	}
 
-	return nil, nil // Record not found
+	// Since we filtered by type in the API call, we can return the first result
+	record := records[0]
+	return &interfaces.DNSRecord{
+		Name:     record.Name,
+		Type:     record.Type,
+		Value:    record.Content,
+		TTL:      record.TTL,
+		Provider: "cloudflare",
+		Metadata: map[string]string{
+			"cloudflare_id": record.ID,
+			"proxied":       fmt.Sprintf("%t", record.Proxied),
+		},
+	}, nil
 }
 
 // DeleteRecord deletes a DNS record
-func (c *CloudflareProvider) DeleteRecord(ctx context.Context, name string) error {
+func (c *CloudflareProvider) DeleteRecord(ctx context.Context, name, recordType string) error {
 	c.logger.Info("deleting DNS record",
 		zap.String("provider", "cloudflare"),
 		zap.String("record", name),
+		zap.String("type", recordType),
 	)
 
-	record, err := c.findRecord(ctx, name, "")
+	record, err := c.findRecord(ctx, name, recordType)
 	if err != nil {
 		return errors.NewDNSProviderError("cloudflare", name, err)
 	}
@@ -138,11 +158,16 @@ func (c *CloudflareProvider) DeleteRecord(ctx context.Context, name string) erro
 		c.logger.Warn("record not found for deletion",
 			zap.String("provider", "cloudflare"),
 			zap.String("record", name),
+			zap.String("type", recordType),
 		)
 		return nil // Record doesn't exist, consider it deleted
 	}
 
-	return c.deleteRecordByID(ctx, record.ID)
+	if err := c.deleteRecordByID(ctx, record.ID); err != nil {
+		return errors.NewDNSProviderError("cloudflare", name, err)
+	}
+
+	return nil
 }
 
 // Validate checks if the provider configuration is valid
@@ -152,7 +177,7 @@ func (c *CloudflareProvider) Validate(ctx context.Context) error {
 	// Test API access by listing records
 	_, err := c.listRecords(ctx)
 	if err != nil {
-		return fmt.Errorf("Cloudflare API validation failed: %w", err)
+		return fmt.Errorf("cloudflare API validation failed: %w", err)
 	}
 
 	c.logger.Info("Cloudflare provider validation successful")
@@ -160,14 +185,31 @@ func (c *CloudflareProvider) Validate(ctx context.Context) error {
 }
 
 // findRecord finds a record by name and type
+// Uses efficient API filtering when recordType is specified
 func (c *CloudflareProvider) findRecord(ctx context.Context, name, recordType string) (*CloudflareDNSRecord, error) {
-	records, err := c.listRecords(ctx)
+	var records []CloudflareDNSRecord
+	var err error
+
+	if recordType != "" {
+		// Use efficient API filtering by both name and type
+		records, err = c.getRecordsByNameAndType(ctx, name, recordType)
+	} else {
+		// Fall back to name-only filtering and check types in code
+		records, err = c.getRecordsByName(ctx, name)
+	}
+
 	if err != nil {
 		return nil, err
 	}
 
+	// If we used API type filtering, we can return the first result
+	if recordType != "" && len(records) > 0 {
+		return &records[0], nil
+	}
+
+	// Otherwise, filter by type in code (for backward compatibility)
 	for _, record := range records {
-		if record.Name == name && (recordType == "" || record.Type == recordType) {
+		if recordType == "" || record.Type == recordType {
 			return &record, nil
 		}
 	}
@@ -175,38 +217,112 @@ func (c *CloudflareProvider) findRecord(ctx context.Context, name, recordType st
 	return nil, nil // Record not found
 }
 
-// listRecords lists all DNS records for the zone
+// listRecords lists all DNS records for the zone with pagination support
 func (c *CloudflareProvider) listRecords(ctx context.Context) ([]CloudflareDNSRecord, error) {
-	url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records", c.config.ZoneID)
+	allRecords := []CloudflareDNSRecord{}
+	page := 1
+	perPage := 100
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
+	for {
+		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?page=%d&per_page=%d",
+			c.config.ZoneID, page, perPage)
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.config.APIToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
+		}
+
+		var apiResp CloudflareAPIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if !apiResp.Success {
+			return nil, fmt.Errorf("cloudflare API error: %v", apiResp.Errors)
+		}
+
+		allRecords = append(allRecords, apiResp.Result...)
+
+		// Check if this is the last page
+		if len(apiResp.Result) < perPage || page >= apiResp.ResultInfo.TotalPages {
+			break
+		}
+		page++
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.config.APIToken)
-	req.Header.Set("Content-Type", "application/json")
+	return allRecords, nil
+}
 
-	resp, err := c.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+// getRecordsByName efficiently retrieves DNS records by name using API query parameters
+func (c *CloudflareProvider) getRecordsByName(ctx context.Context, name string) ([]CloudflareDNSRecord, error) {
+	return c.getRecordsByNameAndType(ctx, name, "")
+}
+
+// getRecordsByNameAndType retrieves DNS records filtered by name and optionally by type
+func (c *CloudflareProvider) getRecordsByNameAndType(ctx context.Context, name, recordType string) ([]CloudflareDNSRecord, error) {
+	allRecords := []CloudflareDNSRecord{}
+	page := 1
+	perPage := 100
+
+	for {
+		url := fmt.Sprintf("https://api.cloudflare.com/client/v4/zones/%s/dns_records?name=%s&page=%d&per_page=%d",
+			c.config.ZoneID, name, page, perPage)
+
+		// Add type filter if specified
+		if recordType != "" {
+			url += fmt.Sprintf("&type=%s", recordType)
+		}
+
+		req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create request: %w", err)
+		}
+
+		req.Header.Set("Authorization", "Bearer "+c.config.APIToken)
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := c.client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("request failed: %w", err)
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode != http.StatusOK {
+			return nil, errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
+		}
+
+		var apiResp CloudflareAPIResponse
+		if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
+			return nil, fmt.Errorf("failed to decode response: %w", err)
+		}
+
+		if !apiResp.Success {
+			return nil, fmt.Errorf("cloudflare API error: %v", apiResp.Errors)
+		}
+
+		allRecords = append(allRecords, apiResp.Result...)
+
+		// Check if this is the last page
+		if len(apiResp.Result) < perPage || page >= apiResp.ResultInfo.TotalPages {
+			break
+		}
+		page++
 	}
-	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return nil, errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
-	}
-
-	var apiResp CloudflareAPIResponse
-	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	if !apiResp.Success {
-		return nil, fmt.Errorf("Cloudflare API error: %v", apiResp.Errors)
-	}
-
-	return apiResp.Result, nil
+	return allRecords, nil
 }
 
 // updateExistingRecord updates an existing DNS record
@@ -250,7 +366,7 @@ func (c *CloudflareProvider) updateExistingRecord(ctx context.Context, recordID 
 	}
 
 	if !apiResp.Success {
-		return fmt.Errorf("Cloudflare API error: %v", apiResp.Errors)
+		return fmt.Errorf("cloudflare API error: %v", apiResp.Errors)
 	}
 
 	c.logger.Info("DNS record updated successfully",
@@ -303,7 +419,7 @@ func (c *CloudflareProvider) createNewRecord(ctx context.Context, record interfa
 	}
 
 	if !apiResp.Success {
-		return fmt.Errorf("Cloudflare API error: %v", apiResp.Errors)
+		return fmt.Errorf("cloudflare API error: %v", apiResp.Errors)
 	}
 
 	c.logger.Info("DNS record created successfully",
@@ -341,7 +457,7 @@ func (c *CloudflareProvider) deleteRecordByID(ctx context.Context, recordID stri
 	}
 
 	if !apiResp.Success {
-		return fmt.Errorf("Cloudflare API error: %v", apiResp.Errors)
+		return fmt.Errorf("cloudflare API error: %v", apiResp.Errors)
 	}
 
 	c.logger.Info("DNS record deleted successfully",

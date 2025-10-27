@@ -3,8 +3,10 @@
 .PHONY: build test test-coverage clean docker-build docker-run
 
 # Variables
-BINARY_NAME=/bin/ipfailover
-VERSION=$(shell git describe --tags --always --dirty)
+BINARY_NAME=bin/ipfailover
+IMAGE_NAME=ipfailover
+TAG=$(shell git describe --tags --always --dirty)
+VERSION=$(TAG)
 BUILD_TIME=$(shell date -u '+%Y-%m-%d_%H:%M:%S')
 LDFLAGS=-ldflags "-X main.Version=$(VERSION) -X main.BuildTime=$(BUILD_TIME)"
 
@@ -38,13 +40,7 @@ test-coverage:
 test-coverage-check:
 	@echo "Running tests with coverage threshold check..."
 	go test -coverprofile=coverage.out ./...
-	@coverage=$$(go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//'); \
-	if [ $$(echo "$$coverage < 60" | bc -l) -eq 1 ]; then \
-		echo "Coverage $$coverage% is below 60% threshold"; \
-		exit 1; \
-	else \
-		echo "Coverage $$coverage% meets 60% threshold"; \
-	fi
+	@go tool cover -func=coverage.out | grep total | awk '{coverage=$$3; gsub(/%/, "", coverage); if (coverage < 60) {print "Coverage " coverage "% is below 60% threshold"; exit 1} else {print "Coverage " coverage "% meets 60% threshold"; exit 0}}'
 
 # Clean build artifacts
 clean:
@@ -53,28 +49,6 @@ clean:
 	rm -f coverage.out coverage.html
 	rm -rf bin/
 
-# Build Docker image
-docker-build:
-	@echo "Building Docker image..."
-	docker build -t $(BINARY_NAME):$(VERSION) .
-	docker tag $(BINARY_NAME):$(VERSION) $(BINARY_NAME):latest
-
-# Build Docker image for all platforms
-docker-build-all:
-	@echo "Building Docker images for all platforms..."
-	docker build --platform linux/amd64 -t $(BINARY_NAME):$(VERSION) .
-	docker build --platform linux/arm64 -t $(BINARY_NAME):$(VERSION)-arm64 .
-
-# Run Docker container
-docker-run:
-	@echo "Running Docker container..."
-	docker run --rm -p 8080:8080 \
-		-v $(PWD)/testdata/config.yaml:/app/config/config.yaml:ro \
-		-e CLOUDFLARE_API_TOKEN=$$CLOUDFLARE_API_TOKEN \
-		-e CLOUDFLARE_ZONE_ID=$$CLOUDFLARE_ZONE_ID \
-		$(BINARY_NAME):latest
-
-# Format code
 fmt:
 	@echo "Formatting code..."
 	go fmt ./...

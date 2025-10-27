@@ -46,6 +46,13 @@ type CPanelDNSRecord struct {
 
 // NewCPanelProvider creates a new cPanel DNS provider
 func NewCPanelProvider(cfg *config.CPanelConfig, logger *zap.Logger) *CPanelProvider {
+	if cfg == nil {
+		panic("NewCPanelProvider: cfg must not be nil")
+	}
+	if logger == nil {
+		panic("NewCPanelProvider: logger must not be nil")
+	}
+
 	client := &http.Client{
 		Timeout: 30 * time.Second,
 		Transport: &http.Transport{
@@ -92,10 +99,11 @@ func (c *CPanelProvider) UpdateRecord(ctx context.Context, record interfaces.DNS
 }
 
 // GetRecord retrieves an existing DNS record
-func (c *CPanelProvider) GetRecord(ctx context.Context, name string) (*interfaces.DNSRecord, error) {
+func (c *CPanelProvider) GetRecord(ctx context.Context, name string, rtype string) (*interfaces.DNSRecord, error) {
 	c.logger.Debug("getting DNS record",
 		zap.String("provider", "cpanel"),
 		zap.String("record", name),
+		zap.String("type", rtype),
 	)
 
 	records, err := c.listRecords(ctx)
@@ -104,7 +112,7 @@ func (c *CPanelProvider) GetRecord(ctx context.Context, name string) (*interface
 	}
 
 	for _, record := range records {
-		if record.Name == name {
+		if record.Name == name && record.Type == rtype {
 			return &interfaces.DNSRecord{
 				Name:     record.Name,
 				Type:     record.Type,
@@ -123,13 +131,14 @@ func (c *CPanelProvider) GetRecord(ctx context.Context, name string) (*interface
 }
 
 // DeleteRecord deletes a DNS record
-func (c *CPanelProvider) DeleteRecord(ctx context.Context, name string) error {
+func (c *CPanelProvider) DeleteRecord(ctx context.Context, name, recordType string) error {
 	c.logger.Info("deleting DNS record",
 		zap.String("provider", "cpanel"),
 		zap.String("record", name),
+		zap.String("type", recordType),
 	)
 
-	record, err := c.findRecord(ctx, name, "")
+	record, err := c.findRecord(ctx, name, recordType)
 	if err != nil {
 		return errors.NewDNSProviderError("cpanel", name, err)
 	}
@@ -138,11 +147,16 @@ func (c *CPanelProvider) DeleteRecord(ctx context.Context, name string) error {
 		c.logger.Warn("record not found for deletion",
 			zap.String("provider", "cpanel"),
 			zap.String("record", name),
+			zap.String("type", recordType),
 		)
 		return nil // Record doesn't exist, consider it deleted
 	}
 
-	return c.deleteRecordByLine(ctx, record.Line)
+	if err := c.deleteRecordByLine(ctx, record.Line); err != nil {
+		return errors.NewDNSProviderError("cpanel", name, err)
+	}
+
+	return nil
 }
 
 // Validate checks if the provider configuration is valid
@@ -188,7 +202,6 @@ func (c *CPanelProvider) listRecords(ctx context.Context) ([]CPanelDNSRecord, er
 	}
 
 	req.SetBasicAuth(c.config.Username, c.config.APIToken)
-	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
 	if err != nil {

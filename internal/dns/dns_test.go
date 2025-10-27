@@ -29,16 +29,16 @@ func (m *MockDNSProvider) UpdateRecord(ctx context.Context, record interfaces.DN
 	return args.Error(0)
 }
 
-func (m *MockDNSProvider) GetRecord(ctx context.Context, name string) (*interfaces.DNSRecord, error) {
-	args := m.Called(ctx, name)
+func (m *MockDNSProvider) GetRecord(ctx context.Context, name string, rtype string) (*interfaces.DNSRecord, error) {
+	args := m.Called(ctx, name, rtype)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*interfaces.DNSRecord), args.Error(1)
 }
 
-func (m *MockDNSProvider) DeleteRecord(ctx context.Context, name string) error {
-	args := m.Called(ctx, name)
+func (m *MockDNSProvider) DeleteRecord(ctx context.Context, name, recordType string) error {
+	args := m.Called(ctx, name, recordType)
 	return args.Error(0)
 }
 

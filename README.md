@@ -193,7 +193,7 @@ The application provides built-in health check functionality:
 
 ### Prerequisites
 
-- Go 1.21+
+- Go 1.24+
 - Docker (optional)
 - Make
 

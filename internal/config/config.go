@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 
 	"github.com/spf13/viper"
@@ -111,6 +113,17 @@ func LoadConfig(configPath string) (*Config, error) {
 	return &config, nil
 }
 
+// getDefaultStateFilePath returns a cross-platform default path for the state file
+func getDefaultStateFilePath() string {
+	// Try to use user config directory first (more appropriate for user applications)
+	if configDir, err := os.UserConfigDir(); err == nil {
+		return filepath.Join(configDir, "ipfailover", "state.json")
+	}
+
+	// Fallback to temp directory if user config directory is not available
+	return filepath.Join(os.TempDir(), "ipfailover", "state.json")
+}
+
 // setDefaults sets default configuration values
 func setDefaults() {
 	viper.SetDefault("poll_interval", "30s")
@@ -118,7 +131,7 @@ func setDefaults() {
 		"https://ifconfig.io/ip",
 		"https://api.ipify.org",
 	})
-	viper.SetDefault("state_file", "/var/lib/ipfailover/state.json")
+	viper.SetDefault("state_file", getDefaultStateFilePath())
 	viper.SetDefault("metrics_addr", ":8080")
 	viper.SetDefault("log_level", "info")
 }
@@ -292,4 +305,28 @@ func (c *NamecheapConfig) Validate() error {
 	}
 
 	return nil
+}
+
+// String returns a safe string representation of CloudflareConfig with sensitive fields redacted
+func (c *CloudflareConfig) String() string {
+	return fmt.Sprintf("CloudflareConfig{APIToken:%s, ZoneID:%s, Proxied:%v}",
+		"[REDACTED]", c.ZoneID, c.Proxied)
+}
+
+// String returns a safe string representation of CPanelConfig with sensitive fields redacted
+func (c *CPanelConfig) String() string {
+	return fmt.Sprintf("CPanelConfig{BaseURL:%s, Username:%s, APIToken:%s, Zone:%s}",
+		c.BaseURL, c.Username, "[REDACTED]", c.Zone)
+}
+
+// String returns a safe string representation of Route53Config with sensitive fields redacted
+func (c *Route53Config) String() string {
+	return fmt.Sprintf("Route53Config{AccessKeyID:%s, SecretAccessKey:%s, Region:%s, HostedZoneID:%s}",
+		"[REDACTED]", "[REDACTED]", c.Region, c.HostedZoneID)
+}
+
+// String returns a safe string representation of NamecheapConfig with sensitive fields redacted
+func (c *NamecheapConfig) String() string {
+	return fmt.Sprintf("NamecheapConfig{APIUser:%s, APIToken:%s, Username:%s, ClientIP:%s, Domain:%s, Sandbox:%v}",
+		c.APIUser, "[REDACTED]", c.Username, "[REDACTED]", c.Domain, c.Sandbox)
 }
