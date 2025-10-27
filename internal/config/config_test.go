@@ -81,11 +81,12 @@ dns:
 func TestConfig_Validate(t *testing.T) {
 	t.Run("valid config", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{"https://ifconfig.io/ip"},
-			PrimaryIP:      "203.0.113.10",
-			SecondaryIP:    "198.51.100.77",
-			StateFile:      "/tmp/state.json",
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{"https://ifconfig.io/ip"},
+			PrimaryIP:            "203.0.113.10",
+			SecondaryIP:          "198.51.100.77",
+			StateFile:            "/tmp/state.json",
+			StateFailureStrategy: "continue_with_warning",
 			DNS: []config.DNSConfig{
 				{
 					Name:     "example.com",
@@ -106,7 +107,8 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("invalid poll interval", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval: -1,
+			PollInterval:         -1,
+			StateFailureStrategy: "continue_with_warning",
 		}
 
 		err := cfg.Validate()
@@ -116,8 +118,9 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("empty check endpoints", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{},
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{},
+			StateFailureStrategy: "continue_with_warning",
 		}
 
 		err := cfg.Validate()
@@ -127,9 +130,10 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("empty primary IP", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{"https://ifconfig.io/ip"},
-			PrimaryIP:      "",
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{"https://ifconfig.io/ip"},
+			PrimaryIP:            "",
+			StateFailureStrategy: "continue_with_warning",
 		}
 
 		err := cfg.Validate()
@@ -139,10 +143,11 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("empty secondary IP", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{"https://ifconfig.io/ip"},
-			PrimaryIP:      "203.0.113.10",
-			SecondaryIP:    "",
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{"https://ifconfig.io/ip"},
+			PrimaryIP:            "203.0.113.10",
+			SecondaryIP:          "",
+			StateFailureStrategy: "continue_with_warning",
 		}
 
 		err := cfg.Validate()
@@ -152,11 +157,12 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("empty state file", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{"https://ifconfig.io/ip"},
-			PrimaryIP:      "203.0.113.10",
-			SecondaryIP:    "198.51.100.77",
-			StateFile:      "",
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{"https://ifconfig.io/ip"},
+			PrimaryIP:            "203.0.113.10",
+			SecondaryIP:          "198.51.100.77",
+			StateFile:            "",
+			StateFailureStrategy: "continue_with_warning",
 		}
 
 		err := cfg.Validate()
@@ -166,12 +172,13 @@ func TestConfig_Validate(t *testing.T) {
 
 	t.Run("empty DNS records", func(t *testing.T) {
 		cfg := &config.Config{
-			PollInterval:   30 * time.Second,
-			CheckEndpoints: []string{"https://ifconfig.io/ip"},
-			PrimaryIP:      "203.0.113.10",
-			SecondaryIP:    "198.51.100.77",
-			StateFile:      "/tmp/state.json",
-			DNS:            []config.DNSConfig{},
+			PollInterval:         30 * time.Second,
+			CheckEndpoints:       []string{"https://ifconfig.io/ip"},
+			PrimaryIP:            "203.0.113.10",
+			SecondaryIP:          "198.51.100.77",
+			StateFile:            "/tmp/state.json",
+			StateFailureStrategy: "continue_with_warning",
+			DNS:                  []config.DNSConfig{},
 		}
 
 		err := cfg.Validate()
