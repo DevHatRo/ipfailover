@@ -188,17 +188,17 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 		app.logger.Warn("failed to store check info", zap.Error(err))
 	}
 
-	// Determine target IP
-	targetIP := app.determineTargetIP(currentIP)
-	if targetIP == "" {
-		app.logger.Debug("no target IP determined, skipping update")
-		return nil
-	}
-
 	// Check if we need to update
 	lastAppliedIP, err := app.stateStore.GetLastAppliedIP(ctx)
 	if err != nil {
 		app.logger.Warn("failed to get last applied IP", zap.Error(err))
+	}
+
+	// Determine target IP
+	targetIP := app.determineTargetIP(lastAppliedIP)
+	if targetIP == "" {
+		app.logger.Debug("no target IP determined, skipping update")
+		return nil
 	}
 
 	if lastAppliedIP == targetIP {
@@ -230,7 +230,8 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 
 // determineTargetIP determines which IP should be used based on active reachability check
 // Implements retry logic: only switches to secondary after configurable number of consecutive failures
-func (app *Application) determineTargetIP(currentIP string) string {
+// On first run (lastAppliedIP empty), verifies primary reachability before returning it
+func (app *Application) determineTargetIP(lastAppliedIP string) string {
 	// Create a context with a short timeout for reachability checks
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -240,7 +241,15 @@ func (app *Application) determineTargetIP(currentIP string) string {
 	if err == nil {
 		// Primary is reachable, reset failure count and use primary
 		if resetErr := app.stateStore.ResetPrimaryFailureCount(ctx); resetErr != nil {
-			app.logger.Warn("failed to reset primary failure count", zap.Error(resetErr))
+			app.logger.Error("critical: failed to reset primary failure count - state persistence compromised",
+				zap.Error(resetErr),
+				zap.String("primary_ip", app.config.PrimaryIP),
+			)
+			// Handle based on configured strategy
+			if app.config.StateFailureStrategy == "fail_fast" {
+				app.logger.Fatal("state persistence failure - failing fast as configured")
+			}
+			// Continue with primary but log critical error for monitoring
 		}
 
 		app.logger.Debug("Primary IP is reachable, using primary",
@@ -252,13 +261,56 @@ func (app *Application) determineTargetIP(currentIP string) string {
 	// Primary is unreachable, increment failure count
 	failureCount, getErr := app.stateStore.GetPrimaryFailureCount(ctx)
 	if getErr != nil {
-		app.logger.Warn("failed to get primary failure count", zap.Error(getErr))
-		failureCount = 0
+		app.logger.Error("critical: failed to get primary failure count - failover tracking compromised",
+			zap.Error(getErr),
+			zap.String("primary_ip", app.config.PrimaryIP),
+		)
+
+		// Handle based on configured strategy
+		switch app.config.StateFailureStrategy {
+		case "fail_fast":
+			app.logger.Fatal("state persistence failure - failing fast as configured")
+		case "immediate_failover":
+			app.logger.Warn("state persistence failure - immediately failing over to secondary",
+				zap.String("primary_ip", app.config.PrimaryIP),
+				zap.String("secondary_ip", app.config.SecondaryIP),
+			)
+			return app.config.SecondaryIP
+		case "continue_with_warning":
+			fallthrough
+		default:
+			// Default to 0 but this is a critical state - consider immediate failover
+			failureCount = 0
+			app.logger.Warn("continuing with failure count reset due to state persistence failure")
+		}
 	}
 
 	failureCount++
 	if setErr := app.stateStore.SetPrimaryFailureCount(ctx, failureCount); setErr != nil {
-		app.logger.Warn("failed to set primary failure count", zap.Error(setErr))
+		app.logger.Error("critical: failed to persist primary failure count - state tracking unreliable",
+			zap.Error(setErr),
+			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.Int("failure_count", failureCount),
+		)
+
+		// Handle based on configured strategy
+		switch app.config.StateFailureStrategy {
+		case "fail_fast":
+			app.logger.Fatal("state persistence failure - failing fast as configured")
+		case "immediate_failover":
+			app.logger.Warn("state persistence failure - immediately failing over to secondary",
+				zap.String("primary_ip", app.config.PrimaryIP),
+				zap.String("secondary_ip", app.config.SecondaryIP),
+				zap.Int("failure_count", failureCount),
+			)
+			return app.config.SecondaryIP
+		case "continue_with_warning":
+			fallthrough
+		default:
+			// State persistence failed - this is critical for failover reliability
+			// Continue but log critical error for monitoring
+			app.logger.Warn("continuing despite state persistence failure - failover tracking may be unreliable")
+		}
 	}
 
 	app.logger.Debug("Primary IP unreachable, incrementing failure count",
@@ -279,7 +331,20 @@ func (app *Application) determineTargetIP(currentIP string) string {
 		return app.config.SecondaryIP
 	}
 
-	// Still within retry threshold, continue using primary
+	// Still within retry threshold, but check if this is first run
+	if lastAppliedIP == "" {
+		// First run: primary is unreachable, don't return it to avoid DNS update to unreachable host
+		app.logger.Error("First run detected with unreachable primary - avoiding DNS update to unreachable host",
+			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.String("secondary_ip", app.config.SecondaryIP),
+			zap.Int("failure_count", failureCount),
+			zap.Int("max_retries", app.config.FailoverRetries),
+		)
+		// Return secondary IP to ensure DNS points to a reachable host
+		return app.config.SecondaryIP
+	}
+
+	// Not first run: still within retry threshold, continue using primary
 	app.logger.Debug("Primary IP still within retry threshold, continuing with primary",
 		zap.String("primary_ip", app.config.PrimaryIP),
 		zap.Int("failure_count", failureCount),

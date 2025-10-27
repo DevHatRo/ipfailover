@@ -1,6 +1,7 @@
 # IP Failover Configuration
 poll_interval: "30s"
 failover_retries: 3
+state_failure_strategy: "continue_with_warning" # Options: fail_fast, continue_with_warning, immediate_failover
 check_endpoints:
   - "https://ifconfig.io/ip"
   - "https://api.ipify.org"

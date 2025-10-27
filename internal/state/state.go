@@ -447,9 +447,9 @@ func (f *FileStateStore) GetPrimaryFailureCount(ctx context.Context) (int, error
 	state, err := f.loadState(ctx)
 	if err != nil {
 		if pkgerrors.IsNotFoundError(err) {
-			return 0, nil // Return 0 for new state
+			return 0, err // Return the not found error directly
 		}
-		return 0, err
+		return 0, pkgerrors.NewStateError("get_primary_failure_count", err)
 	}
 
 	return state.PrimaryFailureCount, nil
@@ -465,17 +465,27 @@ func (f *FileStateStore) SetPrimaryFailureCount(ctx context.Context, count int) 
 	defer f.mutex.Unlock()
 
 	state, err := f.loadState(ctx)
-	if err != nil && !pkgerrors.IsNotFoundError(err) {
-		return err
-	}
-
-	if state == nil {
-		state = &State{}
+	if err != nil {
+		if pkgerrors.IsNotFoundError(err) {
+			// If file doesn't exist, create new state
+			state = &State{}
+		} else {
+			// For other errors (like corrupted files), also create new state
+			state = &State{}
+		}
 	}
 
 	state.PrimaryFailureCount = count
 
-	return f.saveState(ctx, state)
+	if err := f.saveState(ctx, state); err != nil {
+		return pkgerrors.NewStateError("set_primary_failure_count", err)
+	}
+
+	f.logger.Info("primary failure count updated",
+		zap.Int("count", count),
+	)
+
+	return nil
 }
 
 // ResetPrimaryFailureCount resets the consecutive failure count for primary IP

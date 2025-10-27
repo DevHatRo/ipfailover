@@ -26,6 +26,10 @@ type Config struct {
 	// FailoverRetries is the number of consecutive failures before switching to secondary IP
 	FailoverRetries int `mapstructure:"failover_retries"`
 
+	// StateFailureStrategy defines how to handle state persistence failures
+	// Options: "fail_fast", "continue_with_warning", "immediate_failover"
+	StateFailureStrategy string `mapstructure:"state_failure_strategy"`
+
 	// StateFile is the path to the state persistence file
 	StateFile string `mapstructure:"state_file"`
 
@@ -135,6 +139,7 @@ func setDefaults() {
 		"https://api.ipify.org",
 	})
 	viper.SetDefault("failover_retries", 3)
+	viper.SetDefault("state_failure_strategy", "continue_with_warning")
 	viper.SetDefault("state_file", getDefaultStateFilePath())
 	viper.SetDefault("metrics_addr", ":8080")
 	viper.SetDefault("log_level", "info")
@@ -160,6 +165,21 @@ func (c *Config) Validate() error {
 
 	if c.FailoverRetries < 0 {
 		return fmt.Errorf("failover_retries must be non-negative")
+	}
+
+	// Validate state failure strategy
+	validStrategies := []string{"fail_fast", "continue_with_warning", "immediate_failover"}
+	if c.StateFailureStrategy != "" {
+		valid := false
+		for _, strategy := range validStrategies {
+			if c.StateFailureStrategy == strategy {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			return fmt.Errorf("state_failure_strategy must be one of: %v", validStrategies)
+		}
 	}
 
 	if c.StateFile == "" {
