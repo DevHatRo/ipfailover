@@ -1,0 +1,29 @@
+name: Version Bump
+
+on:
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - "docs/**"
+      - "examples/**"
+      - "README.md"
+      - "README"
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Bump version and push tag
+        id: semver
+        uses: anothrNick/github-tag-action@1.75.0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GH_PAT }}
+          WITH_V: true
+          DEFAULT_BUMP: minor
+          RELEASE_BRANCHES: main
+          INITIAL_VERSION: 0.0.0

@@ -1,0 +1,40 @@
+# IP Failover Docker Compose
+
+version: "3.8"
+
+services:
+  ipfailover:
+    build: .
+    container_name: ipfailover
+    restart: unless-stopped
+    volumes:
+      - ./config.yaml:/app/config/config.yaml:ro
+      - ipfailover-state:/app/data
+    ports:
+      - "8080:8080" # Metrics port
+    environment:
+      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN}
+      - CLOUDFLARE_ZONE_ID=${CLOUDFLARE_ZONE_ID}
+      - CPANEL_USERNAME=${CPANEL_USERNAME}
+      - CPANEL_API_TOKEN=${CPANEL_API_TOKEN}
+    healthcheck:
+      test:
+        [
+          "/app/ipfailover",
+          "-health-check",
+          "-config",
+          "/app/config/config.yaml",
+        ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  ipfailover-state:
+    driver: local

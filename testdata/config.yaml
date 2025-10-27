@@ -1,0 +1,73 @@
+# IP Failover Configuration
+poll_interval: "30s"
+check_endpoints:
+  - "https://ifconfig.io/ip"
+  - "https://api.ipify.org"
+
+primary_ip: "203.0.113.10"
+secondary_ip: "198.51.100.77"
+
+state_file: "/var/lib/ipfailover/state.json"
+metrics_addr: ":8080"
+log_level: "info"
+
+dns:
+  - name: "home.example.com"
+    type: "A"
+    provider: "cloudflare"
+    ttl: 300
+    cloudflare:
+      api_token: "${CLOUDFLARE_API_TOKEN}"
+      zone_id: "${CLOUDFLARE_ZONE_ID}"
+      proxied: false
+    metadata:
+      description: "Home server A record"
+
+  - name: "api.example.com"
+    type: "A"
+    provider: "cloudflare"
+    ttl: 300
+    cloudflare:
+      api_token: "${CLOUDFLARE_API_TOKEN}"
+      zone_id: "${CLOUDFLARE_ZONE_ID}"
+      proxied: true
+    metadata:
+      description: "API server A record"
+
+  - name: "backup.example.com"
+    type: "A"
+    provider: "cpanel"
+    ttl: 300
+    cpanel:
+      base_url: "https://cpanel.example.com"
+      username: "${CPANEL_USERNAME}"
+      api_token: "${CPANEL_API_TOKEN}"
+      zone: "example.com"
+    metadata:
+      description: "Backup server A record"
+
+  - name: "aws.example.com"
+    type: "A"
+    provider: "route53"
+    ttl: 300
+    route53:
+      access_key_id: "${AWS_ACCESS_KEY_ID}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+      region: "us-east-1"
+      hosted_zone_id: "${AWS_HOSTED_ZONE_ID}"
+    metadata:
+      description: "AWS Route53 A record"
+
+  - name: "nc.example.com"
+    type: "A"
+    provider: "namecheap"
+    ttl: 300
+    namecheap:
+      api_user: "${NAMECHEAP_API_USER}"
+      api_token: "${NAMECHEAP_API_TOKEN}"
+      username: "${NAMECHEAP_USERNAME}"
+      client_ip: "${NAMECHEAP_CLIENT_IP}"
+      domain: "example.com"
+      sandbox: false
+    metadata:
+      description: "Namecheap A record"

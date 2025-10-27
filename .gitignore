@@ -1,0 +1,117 @@
+# Binaries for programs and plugins
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binary, built with `go test -c`
+*.test
+
+# Output of the go coverage tool, specifically when used with LiteIDE
+*.out
+
+# Dependency directories (remove the comment below to include it)
+# vendor/
+
+# Go workspace file
+go.work
+
+# Build output
+/bin/
+/dist/
+/build/
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Runtime data
+pids
+*.pid
+*.seed
+*.pid.lock
+
+# Coverage directory used by tools like istanbul
+coverage/
+*.cover
+*.coverprofile
+
+# Temporary files
+tmp/
+temp/
+*.tmp
+
+# Configuration files with secrets
+config.local.yaml
+config.prod.yaml
+.env
+.env.local
+.env.prod
+
+# State files
+state.json
+*.state
+
+# Docker
+.dockerignore
+
+# Kubernetes
+*.kubeconfig
+
+# Backup files
+*.bak
+*.backup
+
+# Archive files
+*.tar.gz
+*.zip
+*.rar
+
+# Node.js (if using any frontend tools)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python (if using any Python tools)
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# Terraform (if using infrastructure as code)
+*.tfstate
+*.tfstate.*
+.terraform/
+.terraform.lock.hcl
+
+# Helm charts
+charts/*/charts/
+charts/*/requirements.lock
+
+# Local development
+.local/
+local/
