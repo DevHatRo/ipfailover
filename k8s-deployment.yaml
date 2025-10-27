@@ -1,0 +1,172 @@
+# Kubernetes Deployment for IP Failover
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ipfailover
+  labels:
+    app: ipfailover
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: ipfailover
+  template:
+    metadata:
+      labels:
+        app: ipfailover
+    spec:
+      serviceAccountName: ipfailover
+      containers:
+        - name: ipfailover
+          image: ipfailover:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+              name: metrics
+          env:
+            - name: CLOUDFLARE_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ipfailover-secrets
+                  key: cloudflare-api-token
+            - name: CLODFLARE_ZONE_ID
+              valueFrom:
+                secretKeyRef:
+                  name: ipfailover-secrets
+                  key: cloudflare-zone-id
+            - name: CPANEL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: ipfailover-secrets
+                  key: cpanel-username
+            - name: CPANEL_API_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: ipfailover-secrets
+                  key: cpanel-api-token
+          volumeMounts:
+            - name: config
+              mountPath: /etc/ipfailover/config.yaml
+              subPath: config.yaml
+              readOnly: true
+            - name: state
+              mountPath: /var/lib/ipfailover
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "50m"
+            limits:
+              memory: "256Mi"
+              cpu: "200m"
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 30
+            periodSeconds: 30
+            timeoutSeconds: 10
+            failureThreshold: 3
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 5
+            failureThreshold: 3
+      volumes:
+        - name: config
+          configMap:
+            name: ipfailover-config
+        - name: state
+          persistentVolumeClaim:
+            claimName: ipfailover-state
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ipfailover
+  labels:
+    app: ipfailover
+spec:
+  ports:
+    - port: 8080
+      targetPort: 8080
+      name: metrics
+  selector:
+    app: ipfailover
+
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: ipfailover
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ipfailover-config
+data:
+  config.yaml: |
+    poll_interval: "30s"
+    check_endpoints:
+      - "https://ifconfig.io/ip"
+      - "https://api.ipify.org"
+    primary_ip: "203.0.113.10"
+    secondary_ip: "198.51.100.77"
+    state_file: "/var/lib/ipfailover/state.json"
+    metrics_addr: ":8080"
+    log_level: "info"
+    dns:
+      - name: "home.example.com"
+        type: "A"
+        provider: "cloudflare"
+        ttl: 300
+        cloudflare:
+          api_token: "${CLOUDFLARE_API_TOKEN}"
+          zone_id: "${CLOUDFLARE_ZONE_ID}"
+          proxied: false
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ipfailover-secrets
+type: Opaque
+data:
+  # Base64 encoded values - replace with actual values
+  cloudflare-api-token: <base64-encoded-token>
+  cloudflare-zone-id: <base64-encoded-zone-id>
+  cpanel-username: <base64-encoded-username>
+  cpanel-api-token: <base64-encoded-token>
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: ipfailover-state
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+
+---
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: ipfailover
+  labels:
+    app: ipfailover
+spec:
+  selector:
+    matchLabels:
+      app: ipfailover
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics

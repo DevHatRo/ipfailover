@@ -1,0 +1,37 @@
+[Unit]
+Description=IP Failover Daemon
+Documentation=https://github.com/devhat/ipfailover
+After=network.target
+
+[Service]
+Type=simple
+User=ipfailover
+Group=ipfailover
+ExecStart=/usr/local/bin/ipfailover /etc/ipfailover/config.yaml
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=ipfailover
+
+# Security settings
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/ipfailover
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits
+LimitNOFILE=65536
+MemoryMax=256M
+CPUQuota=50%
+
+# Environment
+Environment=GOMAXPROCS=2
+
+[Install]
+WantedBy=multi-user.target
