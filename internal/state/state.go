@@ -15,11 +15,12 @@ import (
 
 // State represents the application state
 type State struct {
-	LastAppliedIP  string    `json:"last_applied_ip"`
-	LastChangeTime time.Time `json:"last_change_time"`
-	LastCheckTime  time.Time `json:"last_check_time"`
-	LastCheckIP    string    `json:"last_check_ip"`
-	UpdateCount    int       `json:"update_count"`
+	LastAppliedIP       string    `json:"last_applied_ip"`
+	LastChangeTime      time.Time `json:"last_change_time"`
+	LastCheckTime       time.Time `json:"last_check_time"`
+	LastCheckIP         string    `json:"last_check_ip"`
+	UpdateCount         int       `json:"update_count"`
+	PrimaryFailureCount int       `json:"primary_failure_count"`
 }
 
 // FileStateStore implements StateStore using a JSON file
@@ -309,12 +310,13 @@ func (f *FileStateStore) saveState(ctx context.Context, state *State) error {
 
 // MockStateStore implements StateStore for testing
 type MockStateStore struct {
-	lastAppliedIP  string
-	lastChangeTime time.Time
-	lastCheckIP    string
-	lastCheckTime  time.Time
-	updateCount    int
-	mutex          sync.RWMutex
+	lastAppliedIP       string
+	lastChangeTime      time.Time
+	lastCheckIP         string
+	lastCheckTime       time.Time
+	updateCount         int
+	primaryFailureCount int
+	mutex               sync.RWMutex
 }
 
 // NewMockStateStore creates a new mock state store
@@ -403,4 +405,90 @@ func (m *MockStateStore) GetUpdateCount(ctx context.Context) (int, error) {
 	m.mutex.RLock()
 	defer m.mutex.RUnlock()
 	return m.updateCount, nil
+}
+
+// GetPrimaryFailureCount returns the current consecutive failure count for primary IP
+func (m *MockStateStore) GetPrimaryFailureCount(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	m.mutex.RLock()
+	defer m.mutex.RUnlock()
+	return m.primaryFailureCount, nil
+}
+
+// SetPrimaryFailureCount sets the consecutive failure count for primary IP
+func (m *MockStateStore) SetPrimaryFailureCount(ctx context.Context, count int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.primaryFailureCount = count
+	return nil
+}
+
+// ResetPrimaryFailureCount resets the consecutive failure count for primary IP
+func (m *MockStateStore) ResetPrimaryFailureCount(ctx context.Context) error {
+	return m.SetPrimaryFailureCount(ctx, 0)
+}
+
+// GetPrimaryFailureCount returns the current consecutive failure count for primary IP
+func (f *FileStateStore) GetPrimaryFailureCount(ctx context.Context) (int, error) {
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
+
+	f.mutex.RLock()
+	defer f.mutex.RUnlock()
+
+	state, err := f.loadState(ctx)
+	if err != nil {
+		if pkgerrors.IsNotFoundError(err) {
+			return 0, err // Return the not found error directly
+		}
+		return 0, pkgerrors.NewStateError("get_primary_failure_count", err)
+	}
+
+	return state.PrimaryFailureCount, nil
+}
+
+// SetPrimaryFailureCount sets the consecutive failure count for primary IP
+func (f *FileStateStore) SetPrimaryFailureCount(ctx context.Context, count int) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	f.mutex.Lock()
+	defer f.mutex.Unlock()
+
+	state, err := f.loadState(ctx)
+	if err != nil {
+		if pkgerrors.IsNotFoundError(err) {
+			// If file doesn't exist, create new state
+			state = &State{}
+		} else {
+			// For other errors (like corrupted files), also create new state
+			state = &State{}
+		}
+	}
+
+	state.PrimaryFailureCount = count
+
+	if err := f.saveState(ctx, state); err != nil {
+		return pkgerrors.NewStateError("set_primary_failure_count", err)
+	}
+
+	f.logger.Info("primary failure count updated",
+		zap.Int("count", count),
+	)
+
+	return nil
+}
+
+// ResetPrimaryFailureCount resets the consecutive failure count for primary IP
+func (f *FileStateStore) ResetPrimaryFailureCount(ctx context.Context) error {
+	return f.SetPrimaryFailureCount(ctx, 0)
 }

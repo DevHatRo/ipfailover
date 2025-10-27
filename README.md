@@ -254,7 +254,6 @@ make docker-run
 │   └── interfaces/          # Core interfaces
 ├── scripts/                 # Build scripts
 ├── testdata/                # Test configuration files
-├── .cursor/                  # Cursor AI configuration
 ├── Dockerfile               # Docker build configuration
 ├── docker-compose.yml       # Docker Compose configuration
 ├── k8s-deployment.yaml      # Kubernetes deployment

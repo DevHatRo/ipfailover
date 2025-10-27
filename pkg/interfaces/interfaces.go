@@ -61,6 +61,15 @@ type StateStore interface {
 
 	// GetLastCheckInfo returns information about the last IP check
 	GetLastCheckInfo(ctx context.Context) (string, time.Time, error)
+
+	// GetPrimaryFailureCount returns the current consecutive failure count for primary IP
+	GetPrimaryFailureCount(ctx context.Context) (int, error)
+
+	// SetPrimaryFailureCount sets the consecutive failure count for primary IP
+	SetPrimaryFailureCount(ctx context.Context, count int) error
+
+	// ResetPrimaryFailureCount resets the consecutive failure count for primary IP
+	ResetPrimaryFailureCount(ctx context.Context) error
 }
 
 // MetricsCollector defines the interface for metrics collection

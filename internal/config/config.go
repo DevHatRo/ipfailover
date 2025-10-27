@@ -23,6 +23,13 @@ type Config struct {
 	// SecondaryIP is the secondary IP address to use
 	SecondaryIP string `mapstructure:"secondary_ip"`
 
+	// FailoverRetries is the number of consecutive failures before switching to secondary IP
+	FailoverRetries int `mapstructure:"failover_retries"`
+
+	// StateFailureStrategy defines how to handle state persistence failures
+	// Options: "fail_fast", "continue_with_warning", "immediate_failover"
+	StateFailureStrategy string `mapstructure:"state_failure_strategy"`
+
 	// StateFile is the path to the state persistence file
 	StateFile string `mapstructure:"state_file"`
 
@@ -131,6 +138,8 @@ func setDefaults() {
 		"https://ifconfig.io/ip",
 		"https://api.ipify.org",
 	})
+	viper.SetDefault("failover_retries", 3)
+	viper.SetDefault("state_failure_strategy", "continue_with_warning")
 	viper.SetDefault("state_file", getDefaultStateFilePath())
 	viper.SetDefault("metrics_addr", ":8080")
 	viper.SetDefault("log_level", "info")
@@ -152,6 +161,21 @@ func (c *Config) Validate() error {
 
 	if c.SecondaryIP == "" {
 		return fmt.Errorf("secondary_ip must be specified")
+	}
+
+	if c.FailoverRetries < 0 {
+		return fmt.Errorf("failover_retries must be non-negative")
+	}
+
+	// Validate state failure strategy
+	validStrategies := map[string]bool{
+		"fail_fast":             true,
+		"continue_with_warning": true,
+		"immediate_failover":    true,
+	}
+	if !validStrategies[c.StateFailureStrategy] {
+		allowedValues := []string{"fail_fast", "continue_with_warning", "immediate_failover"}
+		return fmt.Errorf("state_failure_strategy must be one of %v, got: %q", allowedValues, c.StateFailureStrategy)
 	}
 
 	if c.StateFile == "" {

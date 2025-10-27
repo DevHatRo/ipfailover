@@ -21,12 +21,19 @@ type CloudflareProvider struct {
 	logger *zap.Logger
 }
 
-// CloudflareAPIResponse represents a Cloudflare API response
+// CloudflareAPIResponse represents a Cloudflare API response for list operations
 type CloudflareAPIResponse struct {
 	Success    bool                  `json:"success"`
 	Errors     []CloudflareError     `json:"errors"`
 	Result     []CloudflareDNSRecord `json:"result"`
 	ResultInfo CloudflareResultInfo  `json:"result_info"`
+}
+
+// CloudflareSingleRecordResponse represents a Cloudflare API response for single record operations
+type CloudflareSingleRecordResponse struct {
+	Success bool                `json:"success"`
+	Errors  []CloudflareError   `json:"errors"`
+	Result  CloudflareDNSRecord `json:"result"`
 }
 
 // CloudflareResultInfo contains pagination information
@@ -360,7 +367,7 @@ func (c *CloudflareProvider) updateExistingRecord(ctx context.Context, recordID 
 		return errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
 	}
 
-	var apiResp CloudflareAPIResponse
+	var apiResp CloudflareSingleRecordResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -413,7 +420,7 @@ func (c *CloudflareProvider) createNewRecord(ctx context.Context, record interfa
 		return errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
 	}
 
-	var apiResp CloudflareAPIResponse
+	var apiResp CloudflareSingleRecordResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
@@ -451,7 +458,7 @@ func (c *CloudflareProvider) deleteRecordByID(ctx context.Context, recordID stri
 		return errors.NewHTTPError(resp.StatusCode, url, fmt.Errorf("unexpected status code"))
 	}
 
-	var apiResp CloudflareAPIResponse
+	var apiResp CloudflareSingleRecordResponse
 	if err := json.NewDecoder(resp.Body).Decode(&apiResp); err != nil {
 		return fmt.Errorf("failed to decode response: %w", err)
 	}
