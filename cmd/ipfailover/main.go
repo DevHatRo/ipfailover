@@ -30,12 +30,13 @@ var (
 
 // Application represents the main application
 type Application struct {
-	config       *config.Config
-	logger       *zap.Logger
-	ipChecker    interfaces.IPChecker
-	dnsProviders map[string]interfaces.DNSProvider
-	stateStore   interfaces.StateStore
-	metrics      interfaces.MetricsCollector
+	config                *config.Config
+	logger                *zap.Logger
+	ipChecker             interfaces.IPChecker
+	dnsProviders          map[string]interfaces.DNSProvider
+	stateStore            interfaces.StateStore
+	metrics               interfaces.MetricsCollector
+	transientFailureCount int // In-memory fallback counter for when persistence fails
 }
 
 // HealthCheck performs a health check and returns the status
@@ -195,7 +196,7 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 	}
 
 	// Determine target IP
-	targetIP := app.determineTargetIP(lastAppliedIP)
+	targetIP := app.determineTargetIP(ctx, lastAppliedIP)
 	if targetIP == "" {
 		app.logger.Debug("no target IP determined, skipping update")
 		return nil
@@ -231,9 +232,9 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 // determineTargetIP determines which IP should be used based on active reachability check
 // Implements retry logic: only switches to secondary after configurable number of consecutive failures
 // On first run (lastAppliedIP empty), verifies primary reachability before returning it
-func (app *Application) determineTargetIP(lastAppliedIP string) string {
+func (app *Application) determineTargetIP(ctx context.Context, lastAppliedIP string) string {
 	// Create a context with a short timeout for reachability checks
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
 	// Try to reach the primary IP first
@@ -244,16 +245,27 @@ func (app *Application) determineTargetIP(lastAppliedIP string) string {
 			app.logger.Error("critical: failed to reset primary failure count - state persistence compromised",
 				zap.Error(resetErr),
 				zap.String("primary_ip", app.config.PrimaryIP),
+				zap.Int("transient_failure_count", app.transientFailureCount),
 			)
 			// Handle based on configured strategy
 			if app.config.StateFailureStrategy == "fail_fast" {
 				app.logger.Fatal("state persistence failure - failing fast as configured")
 			}
 			// Continue with primary but log critical error for monitoring
+		} else {
+			// Successfully reset persisted count - also reset transient counter
+			if app.transientFailureCount > 0 {
+				app.logger.Info("primary IP recovered, resetting transient failure count",
+					zap.String("primary_ip", app.config.PrimaryIP),
+					zap.Int("transient_failure_count", app.transientFailureCount),
+				)
+				app.transientFailureCount = 0
+			}
 		}
 
 		app.logger.Debug("Primary IP is reachable, using primary",
 			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.Int("transient_failure_count", app.transientFailureCount),
 		)
 		return app.config.PrimaryIP
 	}
@@ -264,6 +276,7 @@ func (app *Application) determineTargetIP(lastAppliedIP string) string {
 		app.logger.Error("critical: failed to get primary failure count - failover tracking compromised",
 			zap.Error(getErr),
 			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.Int("transient_failure_count", app.transientFailureCount),
 		)
 
 		// Handle based on configured strategy
@@ -274,23 +287,30 @@ func (app *Application) determineTargetIP(lastAppliedIP string) string {
 			app.logger.Warn("state persistence failure - immediately failing over to secondary",
 				zap.String("primary_ip", app.config.PrimaryIP),
 				zap.String("secondary_ip", app.config.SecondaryIP),
+				zap.Int("transient_failure_count", app.transientFailureCount),
 			)
 			return app.config.SecondaryIP
 		case "continue_with_warning":
 			fallthrough
 		default:
-			// Default to 0 but this is a critical state - consider immediate failover
-			failureCount = 0
-			app.logger.Warn("continuing with failure count reset due to state persistence failure")
+			// Use transient counter instead of resetting to 0
+			failureCount = 0 // This will be the persisted count
+			app.logger.Warn("using transient failure counter due to state persistence failure",
+				zap.Int("transient_failure_count", app.transientFailureCount),
+				zap.Error(getErr),
+			)
 		}
 	}
 
 	failureCount++
 	if setErr := app.stateStore.SetPrimaryFailureCount(ctx, failureCount); setErr != nil {
-		app.logger.Error("critical: failed to persist primary failure count - state tracking unreliable",
+		// Persistence failed - increment transient counter instead of losing the count
+		app.transientFailureCount++
+		app.logger.Error("critical: failed to persist primary failure count - using transient counter",
 			zap.Error(setErr),
 			zap.String("primary_ip", app.config.PrimaryIP),
 			zap.Int("failure_count", failureCount),
+			zap.Int("transient_failure_count", app.transientFailureCount),
 		)
 
 		// Handle based on configured strategy
@@ -302,30 +322,48 @@ func (app *Application) determineTargetIP(lastAppliedIP string) string {
 				zap.String("primary_ip", app.config.PrimaryIP),
 				zap.String("secondary_ip", app.config.SecondaryIP),
 				zap.Int("failure_count", failureCount),
+				zap.Int("transient_failure_count", app.transientFailureCount),
 			)
 			return app.config.SecondaryIP
 		case "continue_with_warning":
 			fallthrough
 		default:
-			// State persistence failed - this is critical for failover reliability
-			// Continue but log critical error for monitoring
-			app.logger.Warn("continuing despite state persistence failure - failover tracking may be unreliable")
+			// State persistence failed - continue with transient counter
+			app.logger.Warn("continuing with transient failure counter due to persistence failure",
+				zap.Int("transient_failure_count", app.transientFailureCount),
+				zap.Error(setErr),
+			)
 		}
+	} else {
+		// Persistence succeeded - reset transient counter
+		app.transientFailureCount = 0
 	}
+
+	// If we have transient failures, attempt to persist them
+	if app.transientFailureCount > 0 {
+		app.attemptTransientPersistence(ctx, failureCount)
+	}
+
+	// Calculate total failure count including transient failures
+	totalFailureCount := failureCount + app.transientFailureCount
 
 	app.logger.Debug("Primary IP unreachable, incrementing failure count",
 		zap.String("primary_ip", app.config.PrimaryIP),
 		zap.Int("failure_count", failureCount),
+		zap.Int("transient_failure_count", app.transientFailureCount),
+		zap.Int("total_failure_count", totalFailureCount),
 		zap.Int("max_retries", app.config.FailoverRetries),
 		zap.Error(err),
 	)
 
-	// Check if we've exceeded the retry threshold
-	if failureCount >= app.config.FailoverRetries {
+	// Check if we've exceeded the retry threshold (including transient failures)
+	if totalFailureCount >= app.config.FailoverRetries {
 		app.logger.Warn("Primary IP exceeded retry threshold, falling back to secondary",
 			zap.String("primary_ip", app.config.PrimaryIP),
 			zap.String("secondary_ip", app.config.SecondaryIP),
 			zap.Int("failure_count", failureCount),
+			zap.Int("transient_failure_count", app.transientFailureCount),
+			zap.Int("total_failure_count", totalFailureCount),
 			zap.Int("max_retries", app.config.FailoverRetries),
 		)
 		return app.config.SecondaryIP
@@ -333,8 +371,29 @@ func (app *Application) determineTargetIP(lastAppliedIP string) string {
 
 	// Still within retry threshold, but check if this is first run
 	if lastAppliedIP == "" {
-		// First run: primary is unreachable, don't return it to avoid DNS update to unreachable host
-		app.logger.Error("First run detected with unreachable primary - avoiding DNS update to unreachable host",
+		// First run: primary is unreachable, check if secondary is reachable before using it
+		app.logger.Error("First run detected with unreachable primary - checking secondary IP reachability",
+			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.String("secondary_ip", app.config.SecondaryIP),
+			zap.Int("failure_count", failureCount),
+			zap.Int("max_retries", app.config.FailoverRetries),
+		)
+
+		// Check if secondary IP is reachable
+		err := app.checkIPReachability(ctx, app.config.SecondaryIP)
+		if err != nil {
+			app.logger.Error("Secondary IP is also unreachable - skipping DNS update to avoid pointing to unreachable host",
+				zap.String("primary_ip", app.config.PrimaryIP),
+				zap.String("secondary_ip", app.config.SecondaryIP),
+				zap.Int("failure_count", failureCount),
+				zap.Int("max_retries", app.config.FailoverRetries),
+				zap.Error(err),
+			)
+			// Return empty string to skip DNS update
+			return ""
+		}
+
+		app.logger.Info("Secondary IP is reachable - using secondary IP for DNS update",
 			zap.String("primary_ip", app.config.PrimaryIP),
 			zap.String("secondary_ip", app.config.SecondaryIP),
 			zap.Int("failure_count", failureCount),
@@ -410,6 +469,28 @@ func (app *Application) updateDNSRecords(ctx context.Context, targetIP string) e
 	}
 
 	return errs
+}
+
+// attemptTransientPersistence attempts to persist transient failure count when possible
+func (app *Application) attemptTransientPersistence(ctx context.Context, persistedCount int) {
+	// Calculate the total count we want to persist
+	totalCount := persistedCount + app.transientFailureCount
+
+	// Attempt to persist the total count
+	if err := app.stateStore.SetPrimaryFailureCount(ctx, totalCount); err != nil {
+		app.logger.Debug("failed to persist transient failure count - will retry later",
+			zap.Error(err),
+			zap.Int("transient_failure_count", app.transientFailureCount),
+			zap.Int("total_count", totalCount),
+		)
+	} else {
+		// Successfully persisted - reset transient counter
+		app.logger.Info("successfully persisted transient failure count",
+			zap.Int("transient_failure_count", app.transientFailureCount),
+			zap.Int("total_count", totalCount),
+		)
+		app.transientFailureCount = 0
+	}
 }
 
 // getVersion returns the application version

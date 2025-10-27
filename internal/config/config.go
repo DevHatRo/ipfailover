@@ -168,18 +168,14 @@ func (c *Config) Validate() error {
 	}
 
 	// Validate state failure strategy
-	validStrategies := []string{"fail_fast", "continue_with_warning", "immediate_failover"}
-	if c.StateFailureStrategy != "" {
-		valid := false
-		for _, strategy := range validStrategies {
-			if c.StateFailureStrategy == strategy {
-				valid = true
-				break
-			}
-		}
-		if !valid {
-			return fmt.Errorf("state_failure_strategy must be one of: %v", validStrategies)
-		}
+	validStrategies := map[string]bool{
+		"fail_fast":             true,
+		"continue_with_warning": true,
+		"immediate_failover":    true,
+	}
+	if !validStrategies[c.StateFailureStrategy] {
+		allowedValues := []string{"fail_fast", "continue_with_warning", "immediate_failover"}
+		return fmt.Errorf("state_failure_strategy must be one of %v, got: %q", allowedValues, c.StateFailureStrategy)
 	}
 
 	if c.StateFile == "" {
