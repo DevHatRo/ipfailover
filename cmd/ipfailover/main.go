@@ -229,6 +229,7 @@ func (app *Application) checkAndUpdateIP(ctx context.Context) error {
 }
 
 // determineTargetIP determines which IP should be used based on active reachability check
+// Implements retry logic: only switches to secondary after configurable number of consecutive failures
 func (app *Application) determineTargetIP(currentIP string) string {
 	// Create a context with a short timeout for reachability checks
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -237,19 +238,54 @@ func (app *Application) determineTargetIP(currentIP string) string {
 	// Try to reach the primary IP first
 	err := app.checkIPReachability(ctx, app.config.PrimaryIP)
 	if err == nil {
+		// Primary is reachable, reset failure count and use primary
+		if resetErr := app.stateStore.ResetPrimaryFailureCount(ctx); resetErr != nil {
+			app.logger.Warn("failed to reset primary failure count", zap.Error(resetErr))
+		}
+
 		app.logger.Debug("Primary IP is reachable, using primary",
 			zap.String("primary_ip", app.config.PrimaryIP),
 		)
 		return app.config.PrimaryIP
 	}
 
-	// Primary is unreachable, log warning and fall back to secondary
-	app.logger.Warn("Primary IP is unreachable, falling back to secondary",
+	// Primary is unreachable, increment failure count
+	failureCount, getErr := app.stateStore.GetPrimaryFailureCount(ctx)
+	if getErr != nil {
+		app.logger.Warn("failed to get primary failure count", zap.Error(getErr))
+		failureCount = 0
+	}
+
+	failureCount++
+	if setErr := app.stateStore.SetPrimaryFailureCount(ctx, failureCount); setErr != nil {
+		app.logger.Warn("failed to set primary failure count", zap.Error(setErr))
+	}
+
+	app.logger.Debug("Primary IP unreachable, incrementing failure count",
 		zap.String("primary_ip", app.config.PrimaryIP),
-		zap.String("secondary_ip", app.config.SecondaryIP),
+		zap.Int("failure_count", failureCount),
+		zap.Int("max_retries", app.config.FailoverRetries),
 		zap.Error(err),
 	)
-	return app.config.SecondaryIP
+
+	// Check if we've exceeded the retry threshold
+	if failureCount >= app.config.FailoverRetries {
+		app.logger.Warn("Primary IP exceeded retry threshold, falling back to secondary",
+			zap.String("primary_ip", app.config.PrimaryIP),
+			zap.String("secondary_ip", app.config.SecondaryIP),
+			zap.Int("failure_count", failureCount),
+			zap.Int("max_retries", app.config.FailoverRetries),
+		)
+		return app.config.SecondaryIP
+	}
+
+	// Still within retry threshold, continue using primary
+	app.logger.Debug("Primary IP still within retry threshold, continuing with primary",
+		zap.String("primary_ip", app.config.PrimaryIP),
+		zap.Int("failure_count", failureCount),
+		zap.Int("max_retries", app.config.FailoverRetries),
+	)
+	return app.config.PrimaryIP
 }
 
 // checkIPReachability attempts to verify connectivity to the given IP address

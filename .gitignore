@@ -107,6 +107,7 @@ venv.bak/
 *.tfstate.*
 .terraform/
 .terraform.lock.hcl
+config.yaml
 
 # Helm charts
 charts/*/charts/

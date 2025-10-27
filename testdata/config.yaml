@@ -1,5 +1,6 @@
 # IP Failover Configuration
 poll_interval: "30s"
+failover_retries: 3
 check_endpoints:
   - "https://ifconfig.io/ip"
   - "https://api.ipify.org"
