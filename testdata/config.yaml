@@ -60,16 +60,12 @@ dns:
     metadata:
       description: "AWS Route53 A record"
 
-  - name: "nc.example.com"
+  - name: "hetzner.example.com"
     type: "A"
-    provider: "namecheap"
+    provider: "hetzner"
     ttl: 300
-    namecheap:
-      api_user: "${NAMECHEAP_API_USER}"
-      api_token: "${NAMECHEAP_API_TOKEN}"
-      username: "${NAMECHEAP_USERNAME}"
-      client_ip: "${NAMECHEAP_CLIENT_IP}"
-      domain: "example.com"
-      sandbox: false
+    hetzner:
+      api_token: "${HETZNER_API_TOKEN}"
+      zone_id: "${HETZNER_ZONE_ID}"
     metadata:
-      description: "Namecheap A record"
+      description: "Hetzner DNS A record"

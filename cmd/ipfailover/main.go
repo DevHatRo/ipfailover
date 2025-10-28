@@ -106,11 +106,11 @@ func (app *Application) createDNSProvider(dnsConfig config.DNSConfig) (interface
 			return nil, fmt.Errorf("route53 configuration is required")
 		}
 		return dns.NewRoute53Provider(dnsConfig.Route53, app.logger)
-	case "namecheap":
-		if dnsConfig.Namecheap == nil {
-			return nil, fmt.Errorf("namecheap configuration is required")
+	case "hetzner":
+		if dnsConfig.Hetzner == nil {
+			return nil, fmt.Errorf("hetzner configuration is required")
 		}
-		return dns.NewNamecheapProvider(dnsConfig.Namecheap, app.logger), nil
+		return dns.NewHetznerProvider(dnsConfig.Hetzner, app.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported DNS provider: %s", dnsConfig.Provider)
 	}

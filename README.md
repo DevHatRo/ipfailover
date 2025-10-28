@@ -5,7 +5,7 @@ A Go daemon that provides automatic DNS failover functionality. The application 
 ## Features
 
 - **Automatic IP Detection**: Monitors current public IP using multiple external services
-- **DNS Provider Support**: Cloudflare, cPanel, AWS Route53, and Namecheap
+- **DNS Provider Support**: Cloudflare, cPanel, AWS Route53, and Hetzner DNS
 - **State Persistence**: Remembers last applied IP to avoid redundant updates
 - **Prometheus Metrics**: Exposes metrics for monitoring and alerting
 - **Structured Logging**: Uses uber-go/zap for high-performance structured logging
@@ -28,7 +28,7 @@ A Go daemon that provides automatic DNS failover functionality. The application 
 
 ### Key Interfaces
 
-- `DNSProvider`: Interface for DNS operations (Cloudflare, cPanel, Route53, Namecheap implementations)
+- `DNSProvider`: Interface for DNS operations (Cloudflare, cPanel, Route53, Hetzner implementations)
 - `IPChecker`: Interface for IP detection services
 - `StateStore`: Interface for persisting application state
 - `MetricsCollector`: Interface for metrics collection
@@ -100,8 +100,8 @@ dns:
 - `CPANEL_API_TOKEN`: cPanel API token (for cPanel provider)
 - `AWS_ACCESS_KEY_ID`: AWS access key (for Route53 provider)
 - `AWS_SECRET_ACCESS_KEY`: AWS secret key (for Route53 provider)
-- `NAMECHEAP_API_USER`: Namecheap API user (for Namecheap provider)
-- `NAMECHEAP_API_TOKEN`: Namecheap API token (for Namecheap provider)
+- `HETZNER_API_TOKEN`: Hetzner DNS API token (for Hetzner provider)
+- `HETZNER_ZONE_ID`: Hetzner DNS zone ID (for Hetzner provider)
 
 ## Usage
 
@@ -162,12 +162,13 @@ kubectl apply -f k8s-deployment.yaml
 - Supports A/AAAA records with TTL
 - Implements find-or-create pattern for records
 
-### Namecheap
+### Hetzner DNS
 
-- Uses Namecheap XML API
-- Requires API user, API token, username, client IP, and domain
+- Uses Hetzner DNS API v1
+- Requires API token and zone ID
 - Supports A/AAAA records with TTL
 - Implements find-or-create pattern for records
+- Based on [Hetzner DNS API documentation](https://dns.hetzner.com/api-docs#tag/Records)
 
 ## Metrics
 

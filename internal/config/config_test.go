@@ -418,24 +418,4 @@ func TestConfig_String_Methods(t *testing.T) {
 		assert.NotContains(t, result, "AKIAIOSFODNN7EXAMPLE")
 		assert.NotContains(t, result, "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY")
 	})
-
-	t.Run("NamecheapConfig redacts sensitive data", func(t *testing.T) {
-		cfg := &config.NamecheapConfig{
-			APIUser:  "testuser",
-			APIToken: "secret-token",
-			Username: "username",
-			ClientIP: "192.168.1.1",
-			Domain:   "example.com",
-			Sandbox:  true,
-		}
-
-		result := cfg.String()
-		assert.Contains(t, result, "[REDACTED]")
-		assert.Contains(t, result, "testuser")
-		assert.Contains(t, result, "username")
-		assert.Contains(t, result, "example.com")
-		assert.Contains(t, result, "Sandbox:true")
-		assert.NotContains(t, result, "secret-token")
-		assert.NotContains(t, result, "192.168.1.1")
-	})
 }
