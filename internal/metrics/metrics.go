@@ -133,7 +133,9 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 			)
 			// Try to write error response if possible
 			w.WriteHeader(http.StatusInternalServerError)
-			w.Write([]byte("Internal Server Error"))
+			if _, writeErr := w.Write([]byte("Internal Server Error")); writeErr != nil {
+				pc.logger.Error("failed to write error response", zap.Error(writeErr))
+			}
 		}
 	})
 

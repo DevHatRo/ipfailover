@@ -41,7 +41,9 @@ func TestCPanelProvider_Validate(t *testing.T) {
 		// Create mock server
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"result":{"data":[],"meta":{"result":1}}}`))
+			if _, err := w.Write([]byte(`{"result":{"data":[],"meta":{"result":1}}}`)); err != nil {
+				t.Errorf("failed to write mock response: %v", err)
+			}
 		}))
 		defer server.Close()
 

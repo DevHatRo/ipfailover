@@ -55,7 +55,9 @@ func TestHTTPChecker_GetCurrentIP(t *testing.T) {
 			// Arrange
 			mockServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				w.WriteHeader(tt.mockStatusCode)
-				w.Write([]byte(tt.mockResponse))
+				if _, err := w.Write([]byte(tt.mockResponse)); err != nil {
+					t.Errorf("failed to write mock response: %v", err)
+				}
 			}))
 			defer mockServer.Close()
 
@@ -80,14 +82,18 @@ func TestHTTPChecker_GetCurrentIP_MultipleEndpoints(t *testing.T) {
 	// First server returns error
 	server1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(500)
-		w.Write([]byte("error"))
+		if _, err := w.Write([]byte("error")); err != nil {
+			t.Errorf("failed to write error response: %v", err)
+		}
 	}))
 	defer server1.Close()
 
 	// Second server returns valid IP
 	server2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
-		w.Write([]byte("203.0.113.10"))
+		if _, err := w.Write([]byte("203.0.113.10")); err != nil {
+			t.Errorf("failed to write IP response: %v", err)
+		}
 	}))
 	defer server2.Close()
 
@@ -212,7 +218,9 @@ func TestHTTPChecker_ContextCancellation(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		time.Sleep(100 * time.Millisecond)
 		w.WriteHeader(200)
-		w.Write([]byte("203.0.113.10"))
+		if _, err := w.Write([]byte("203.0.113.10")); err != nil {
+			t.Errorf("failed to write mock response: %v", err)
+		}
 	}))
 	defer server.Close()
 
@@ -235,7 +243,9 @@ func TestHTTPChecker_UserAgent(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		userAgent = r.Header.Get("User-Agent")
 		w.WriteHeader(200)
-		w.Write([]byte("203.0.113.10"))
+		if _, err := w.Write([]byte("203.0.113.10")); err != nil {
+			t.Errorf("failed to write mock response: %v", err)
+		}
 	}))
 	defer server.Close()
 

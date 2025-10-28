@@ -89,6 +89,11 @@ func (r *Route53Provider) GetRecord(ctx context.Context, name string, rtype stri
 		zap.String("type", rtype),
 	)
 
+	// Validate record type is not empty
+	if rtype == "" {
+		return nil, errors.NewDNSProviderError("route53", name, fmt.Errorf("empty record type"))
+	}
+
 	records, err := r.listRecords(ctx)
 	if err != nil {
 		return nil, errors.NewDNSProviderError("route53", name, err)
@@ -140,6 +145,11 @@ func (r *Route53Provider) DeleteRecord(ctx context.Context, name, recordType str
 		zap.String("record", name),
 		zap.String("type", recordType),
 	)
+
+	// Validate record type is not empty
+	if recordType == "" {
+		return errors.NewDNSProviderError("route53", name, fmt.Errorf("empty record type"))
+	}
 
 	record, err := r.findRecord(ctx, name, recordType)
 	if err != nil {

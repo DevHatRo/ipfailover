@@ -2,8 +2,6 @@ package dns_test
 
 import (
 	"context"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/devhat/ipfailover/internal/config"
@@ -32,18 +30,15 @@ func TestCloudflareProvider_Validate(t *testing.T) {
 			ZoneID:   "test-zone",
 		}
 
+		// Create provider
 		provider := dns.NewCloudflareProvider(cfg, logger)
-
-		// Create mock server
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			w.WriteHeader(http.StatusOK)
-			w.Write([]byte(`{"success":true,"result":[]}`))
-		}))
-		defer server.Close()
-
-		// We can't easily test the actual validation without mocking the HTTP client
-		// This test ensures the provider can be created without errors
 		assert.NotNil(t, provider)
+
+		// Test validation - this will fail with real API but tests the code path
+		ctx := context.Background()
+		err := provider.Validate(ctx)
+		// We expect an error since we're using a fake API token
+		assert.Error(t, err)
 	})
 }
 
@@ -110,24 +105,24 @@ func TestCloudflareProvider_CRUDOperations(t *testing.T) {
 	t.Run("GetRecord - empty record type", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		// Test validating empty record type input
+		ctx := context.Background()
 
 		record, err := provider.GetRecord(ctx, "test.example.com", "")
 		assert.Error(t, err)
 		assert.Nil(t, record)
+		assert.Contains(t, err.Error(), "empty record type")
 	})
 
 	t.Run("DeleteRecord - empty record type", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		// Test validating empty record type input
+		ctx := context.Background()
 
 		err := provider.DeleteRecord(ctx, "test.example.com", "")
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "empty record type")
 	})
 }
 

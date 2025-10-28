@@ -111,25 +111,25 @@ func TestRoute53Provider_CRUDOperations(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		// Test validating empty record type input
+		ctx := context.Background()
 
 		record, err := provider.GetRecord(ctx, "test.example.com", "")
 		assert.Error(t, err)
 		assert.Nil(t, record)
+		assert.Contains(t, err.Error(), "empty record type")
 	})
 
 	t.Run("DeleteRecord - empty record type", func(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		// Test validating empty record type input
+		ctx := context.Background()
 
 		err = provider.DeleteRecord(ctx, "test.example.com", "")
 		assert.Error(t, err)
+		assert.Contains(t, err.Error(), "empty record type")
 	})
 }
 

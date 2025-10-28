@@ -90,7 +90,11 @@ func (h *HTTPChecker) checkEndpoint(ctx context.Context, endpoint string) (strin
 	if err != nil {
 		return "", fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			h.logger.Debug("failed to close response body", zap.Error(closeErr))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return "", errors.NewHTTPError(resp.StatusCode, endpoint, fmt.Errorf("unexpected status code"))
