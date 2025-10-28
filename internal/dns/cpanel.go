@@ -207,7 +207,11 @@ func (c *CPanelProvider) listRecords(ctx context.Context) ([]CPanelDNSRecord, er
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", zap.Error(closeErr))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, errors.NewHTTPError(resp.StatusCode, apiURL, fmt.Errorf("unexpected status code"))
@@ -255,7 +259,11 @@ func (c *CPanelProvider) updateExistingRecord(ctx context.Context, line int, rec
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", zap.Error(closeErr))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return errors.NewHTTPError(resp.StatusCode, apiURL, fmt.Errorf("unexpected status code"))
@@ -308,7 +316,11 @@ func (c *CPanelProvider) createNewRecord(ctx context.Context, record interfaces.
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", zap.Error(closeErr))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return errors.NewHTTPError(resp.StatusCode, apiURL, fmt.Errorf("unexpected status code"))
@@ -357,7 +369,11 @@ func (c *CPanelProvider) deleteRecordByLine(ctx context.Context, line int) error
 	if err != nil {
 		return fmt.Errorf("request failed: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() {
+		if closeErr := resp.Body.Close(); closeErr != nil {
+			c.logger.Debug("failed to close response body", zap.Error(closeErr))
+		}
+	}()
 
 	if resp.StatusCode != http.StatusOK {
 		return errors.NewHTTPError(resp.StatusCode, apiURL, fmt.Errorf("unexpected status code"))

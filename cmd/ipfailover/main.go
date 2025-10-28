@@ -106,11 +106,11 @@ func (app *Application) createDNSProvider(dnsConfig config.DNSConfig) (interface
 			return nil, fmt.Errorf("route53 configuration is required")
 		}
 		return dns.NewRoute53Provider(dnsConfig.Route53, app.logger)
-	case "namecheap":
-		if dnsConfig.Namecheap == nil {
-			return nil, fmt.Errorf("namecheap configuration is required")
+	case "hetzner":
+		if dnsConfig.Hetzner == nil {
+			return nil, fmt.Errorf("hetzner configuration is required")
 		}
-		return dns.NewNamecheapProvider(dnsConfig.Namecheap, app.logger), nil
+		return dns.NewHetznerProvider(dnsConfig.Hetzner, app.logger), nil
 	default:
 		return nil, fmt.Errorf("unsupported DNS provider: %s", dnsConfig.Provider)
 	}
@@ -419,7 +419,11 @@ func (app *Application) checkIPReachability(ctx context.Context, ip string) erro
 	if err != nil {
 		return fmt.Errorf("failed to connect to %s:80: %w", ip, err)
 	}
-	defer conn.Close()
+	defer func() {
+		if closeErr := conn.Close(); closeErr != nil {
+			app.logger.Debug("failed to close connection", zap.Error(closeErr))
+		}
+	}()
 
 	// Connection successful
 	return nil
@@ -586,7 +590,11 @@ func main() {
 		fmt.Fprintf(os.Stderr, "Failed to setup logging: %v\n", err)
 		os.Exit(1)
 	}
-	defer logger.Sync()
+	defer func() {
+		if syncErr := logger.Sync(); syncErr != nil {
+			fmt.Fprintf(os.Stderr, "Failed to sync logger: %v\n", syncErr)
+		}
+	}()
 
 	logger.Info("IP failover daemon starting",
 		zap.String("config", *configFile),

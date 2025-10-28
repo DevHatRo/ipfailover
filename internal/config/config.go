@@ -55,7 +55,7 @@ type DNSConfig struct {
 	Cloudflare *CloudflareConfig `mapstructure:"cloudflare,omitempty"`
 	CPanel     *CPanelConfig     `mapstructure:"cpanel,omitempty"`
 	Route53    *Route53Config    `mapstructure:"route53,omitempty"`
-	Namecheap  *NamecheapConfig  `mapstructure:"namecheap,omitempty"`
+	Hetzner    *HetznerConfig    `mapstructure:"hetzner,omitempty"`
 }
 
 // CloudflareConfig represents Cloudflare-specific configuration
@@ -81,14 +81,10 @@ type Route53Config struct {
 	HostedZoneID    string `mapstructure:"hosted_zone_id"`
 }
 
-// NamecheapConfig represents Namecheap-specific configuration
-type NamecheapConfig struct {
-	APIUser  string `mapstructure:"api_user"`
+// HetznerConfig represents Hetzner DNS-specific configuration
+type HetznerConfig struct {
 	APIToken string `mapstructure:"api_token"`
-	Username string `mapstructure:"username"`
-	ClientIP string `mapstructure:"client_ip"`
-	Domain   string `mapstructure:"domain"`
-	Sandbox  bool   `mapstructure:"sandbox"`
+	ZoneID   string `mapstructure:"zone_id"`
 }
 
 // LoadConfig loads configuration from file and environment variables
@@ -237,12 +233,12 @@ func (d *DNSConfig) Validate() error {
 		if err := d.Route53.Validate(); err != nil {
 			return fmt.Errorf("route53 config validation failed: %w", err)
 		}
-	case "namecheap":
-		if d.Namecheap == nil {
-			return fmt.Errorf("namecheap configuration is required for namecheap provider")
+	case "hetzner":
+		if d.Hetzner == nil {
+			return fmt.Errorf("hetzner configuration is required for hetzner provider")
 		}
-		if err := d.Namecheap.Validate(); err != nil {
-			return fmt.Errorf("namecheap config validation failed: %w", err)
+		if err := d.Hetzner.Validate(); err != nil {
+			return fmt.Errorf("hetzner config validation failed: %w", err)
 		}
 	default:
 		return fmt.Errorf("unsupported provider: %s", d.Provider)
@@ -306,26 +302,14 @@ func (c *Route53Config) Validate() error {
 	return nil
 }
 
-// Validate validates Namecheap configuration
-func (c *NamecheapConfig) Validate() error {
-	if c.APIUser == "" {
-		return fmt.Errorf("api_user is required")
-	}
-
+// Validate validates Hetzner configuration
+func (c *HetznerConfig) Validate() error {
 	if c.APIToken == "" {
 		return fmt.Errorf("api_token is required")
 	}
 
-	if c.Username == "" {
-		return fmt.Errorf("username is required")
-	}
-
-	if c.ClientIP == "" {
-		return fmt.Errorf("client_ip is required")
-	}
-
-	if c.Domain == "" {
-		return fmt.Errorf("domain is required")
+	if c.ZoneID == "" {
+		return fmt.Errorf("zone_id is required")
 	}
 
 	return nil
@@ -349,8 +333,8 @@ func (c *Route53Config) String() string {
 		"[REDACTED]", "[REDACTED]", c.Region, c.HostedZoneID)
 }
 
-// String returns a safe string representation of NamecheapConfig with sensitive fields redacted
-func (c *NamecheapConfig) String() string {
-	return fmt.Sprintf("NamecheapConfig{APIUser:%s, APIToken:%s, Username:%s, ClientIP:%s, Domain:%s, Sandbox:%v}",
-		c.APIUser, "[REDACTED]", c.Username, "[REDACTED]", c.Domain, c.Sandbox)
+// String returns a safe string representation of HetznerConfig with sensitive fields redacted
+func (c *HetznerConfig) String() string {
+	return fmt.Sprintf("HetznerConfig{APIToken:%s, ZoneID:%s}",
+		"[REDACTED]", c.ZoneID)
 }
