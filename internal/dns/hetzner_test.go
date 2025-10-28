@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"testing"
+	"time"
 
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/internal/dns"
@@ -241,13 +242,29 @@ func TestHetznerProvider_ErrorHandling(t *testing.T) {
 	})
 
 	t.Run("Network timeout simulation", func(t *testing.T) {
-		// Create a provider with a very short timeout to simulate network issues
-		provider := dns.NewHetznerProvider(cfg, logger)
+		// Create a test server that delays its response to simulate network timeout
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			// Simulate a slow response that will cause timeout
+			// Sleep for longer than our context timeout
+			time.Sleep(200 * time.Millisecond)
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer server.Close()
+
+		// Create a custom Hetzner client that uses our test server
+		serverURL, _ := url.Parse(server.URL)
+		client := hcloud.NewClient(
+			hcloud.WithToken("test-token"),
+			hcloud.WithEndpoint(serverURL.String()),
+		)
+
+		// Create provider with the custom client
+		provider := dns.NewHetznerProviderWithClient(cfg, client, logger)
 		assert.NotNil(t, provider)
 
-		// Test with cancelled context to trigger error path
-		ctx, cancel := context.WithCancel(context.Background())
-		cancel()
+		// Create context with a very short timeout to trigger network timeout
+		ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+		defer cancel()
 
 		record := interfaces.DNSRecord{
 			Name:     "test.example.com",
@@ -259,7 +276,8 @@ func TestHetznerProvider_ErrorHandling(t *testing.T) {
 
 		err := provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context canceled")
+		// Check for timeout-related error (context deadline exceeded)
+		assert.Contains(t, err.Error(), "context deadline exceeded")
 	})
 }
 
@@ -305,9 +323,8 @@ func TestHetznerProvider_WithMockServer(t *testing.T) {
 	t.Run("GetRecord - success with mock server", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "GET", r.Method)
-			assert.Equal(t, "/api/v1/records", r.URL.Path)
-			assert.Equal(t, "test-zone", r.URL.Query().Get("zone_id"))
-			assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
+			assert.Equal(t, "/zones/test-zone/records", r.URL.Path)
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte(`{
@@ -347,8 +364,8 @@ func TestHetznerProvider_WithMockServer(t *testing.T) {
 				}
 			case "POST":
 				// Create record
-				assert.Equal(t, "/api/v1/records", r.URL.Path)
-				assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
+				assert.Equal(t, "/zones/test-zone/records", r.URL.Path)
+				assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 				w.WriteHeader(http.StatusCreated)
 				if _, err := w.Write([]byte(`{
@@ -397,8 +414,8 @@ func TestHetznerProvider_WithMockServer(t *testing.T) {
 				}
 			case "PUT":
 				// Update record
-				assert.Equal(t, "/api/v1/records/record-123", r.URL.Path)
-				assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
+				assert.Equal(t, "/zones/test-zone/records/record-123", r.URL.Path)
+				assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 				w.WriteHeader(http.StatusOK)
 				if _, err := w.Write([]byte(`{
@@ -447,8 +464,8 @@ func TestHetznerProvider_WithMockServer(t *testing.T) {
 				}
 			case "DELETE":
 				// Delete record
-				assert.Equal(t, "/api/v1/records/record-123", r.URL.Path)
-				assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
+				assert.Equal(t, "/zones/test-zone/records/record-123", r.URL.Path)
+				assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 				w.WriteHeader(http.StatusOK)
 			}
@@ -462,9 +479,8 @@ func TestHetznerProvider_WithMockServer(t *testing.T) {
 	t.Run("Validate - success with mock server", func(t *testing.T) {
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			assert.Equal(t, "GET", r.Method)
-			assert.Equal(t, "/api/v1/records", r.URL.Path)
-			assert.Equal(t, "test-zone", r.URL.Query().Get("zone_id"))
-			assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
+			assert.Equal(t, "/zones/test-zone/records", r.URL.Path)
+			assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
 
 			w.WriteHeader(http.StatusOK)
 			if _, err := w.Write([]byte(`{"records":[]}`)); err != nil {

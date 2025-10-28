@@ -59,13 +59,14 @@ func NewHetznerProviderWithClient(cfg *config.HetznerConfig, client *hcloud.Clie
 	}
 
 	if client == nil {
-		if cfg.APIToken == "" {
+		token := strings.TrimSpace(cfg.APIToken)
+		if token == "" {
 			if logger != nil {
 				logger.Error("hetzner API token is empty")
 			}
 			return nil
 		}
-		client = hcloud.NewClient(hcloud.WithToken(cfg.APIToken))
+		client = hcloud.NewClient(hcloud.WithToken(token))
 	}
 
 	return &HetznerProvider{

@@ -106,8 +106,14 @@ func (c *CloudflareProvider) createRecordParam(record interfaces.DNSRecord) (dns
 		// For MX records, we need to extract priority from the value or metadata
 		priority := 10 // Default priority
 		if priorityStr, exists := record.Metadata["priority"]; exists {
-			if p, err := strconv.ParseFloat(priorityStr, 64); err == nil {
+			if p, err := strconv.ParseInt(priorityStr, 10, 64); err == nil {
 				priority = int(p)
+			} else {
+				// Log warning on parse failure and fall back to default priority
+				zap.L().Warn("Failed to parse MX priority from metadata, using default",
+					zap.String("priority_str", priorityStr),
+					zap.Error(err),
+					zap.Int("default_priority", priority))
 			}
 		}
 		return dns.MXRecordParam{
