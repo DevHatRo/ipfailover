@@ -3,6 +3,7 @@ package dns
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/cloudflare/cloudflare-go/v2"
 	"github.com/cloudflare/cloudflare-go/v2/dns"
@@ -67,6 +68,74 @@ func (c *CloudflareProvider) Name() string {
 	return "cloudflare"
 }
 
+// createRecordParam creates the appropriate RecordUnionParam based on the record type
+func (c *CloudflareProvider) createRecordParam(record interfaces.DNSRecord) (dns.RecordUnionParam, error) {
+	switch record.Type {
+	case "A":
+		return dns.ARecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.ARecordType](dns.ARecordType(record.Type)),
+			Content: cloudflare.String(record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+			Proxied: cloudflare.Bool(c.config.Proxied),
+		}, nil
+	case "AAAA":
+		return dns.AAAARecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.AAAARecordType](dns.AAAARecordType(record.Type)),
+			Content: cloudflare.String(record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+			Proxied: cloudflare.Bool(c.config.Proxied),
+		}, nil
+	case "CNAME":
+		return dns.CNAMERecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.CNAMERecordType](dns.CNAMERecordType(record.Type)),
+			Content: cloudflare.F[interface{}](record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+			Proxied: cloudflare.Bool(c.config.Proxied),
+		}, nil
+	case "TXT":
+		return dns.TXTRecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.TXTRecordType](dns.TXTRecordType(record.Type)),
+			Content: cloudflare.String(record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+		}, nil
+	case "MX":
+		// For MX records, we need to extract priority from the value or metadata
+		priority := 10 // Default priority
+		if priorityStr, exists := record.Metadata["priority"]; exists {
+			if p, err := strconv.ParseFloat(priorityStr, 64); err == nil {
+				priority = int(p)
+			}
+		}
+		return dns.MXRecordParam{
+			Name:     cloudflare.String(record.Name),
+			Type:     cloudflare.Raw[dns.MXRecordType](dns.MXRecordType(record.Type)),
+			Content:  cloudflare.String(record.Value),
+			TTL:      cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+			Priority: cloudflare.Raw[float64](float64(priority)),
+		}, nil
+	case "NS":
+		return dns.NSRecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.NSRecordType](dns.NSRecordType(record.Type)),
+			Content: cloudflare.String(record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+		}, nil
+	case "PTR":
+		return dns.PTRRecordParam{
+			Name:    cloudflare.String(record.Name),
+			Type:    cloudflare.Raw[dns.PTRRecordType](dns.PTRRecordType(record.Type)),
+			Content: cloudflare.String(record.Value),
+			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
+		}, nil
+	default:
+		return nil, fmt.Errorf("unsupported DNS record type: %s", record.Type)
+	}
+}
+
 // UpdateRecord updates or creates a DNS record
 func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces.DNSRecord) error {
 	c.logger.Info("updating DNS record",
@@ -89,15 +158,13 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 	if len(records.Result) > 0 {
 		// Update existing record
 		existingRecord := records.Result[0]
+		recordParam, err := c.createRecordParam(record)
+		if err != nil {
+			return errors.NewDNSProviderError("cloudflare", record.Name, err)
+		}
 		_, err = c.client.DNS.Records.Update(ctx, existingRecord.ID, dns.RecordUpdateParams{
 			ZoneID: cloudflare.String(c.config.ZoneID),
-			Record: dns.ARecordParam{
-				Name:    cloudflare.String(record.Name),
-				Type:    cloudflare.Raw[dns.ARecordType](dns.ARecordType(record.Type)),
-				Content: cloudflare.String(record.Value),
-				TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
-				Proxied: cloudflare.Bool(c.config.Proxied),
-			},
+			Record: recordParam,
 		})
 		if err != nil {
 			return errors.NewDNSProviderError("cloudflare", record.Name, err)
@@ -112,15 +179,13 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 	}
 
 	// Create new record
+	recordParam, err := c.createRecordParam(record)
+	if err != nil {
+		return errors.NewDNSProviderError("cloudflare", record.Name, err)
+	}
 	_, err = c.client.DNS.Records.New(ctx, dns.RecordNewParams{
 		ZoneID: cloudflare.String(c.config.ZoneID),
-		Record: dns.ARecordParam{
-			Name:    cloudflare.String(record.Name),
-			Type:    cloudflare.Raw[dns.ARecordType](dns.ARecordType(record.Type)),
-			Content: cloudflare.String(record.Value),
-			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
-			Proxied: cloudflare.Bool(c.config.Proxied),
-		},
+		Record: recordParam,
 	})
 	if err != nil {
 		return errors.NewDNSProviderError("cloudflare", record.Name, err)

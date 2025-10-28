@@ -3,6 +3,8 @@ package dns
 import (
 	"context"
 	"fmt"
+	"strings"
+	"sync"
 
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/pkg/errors"
@@ -17,6 +19,7 @@ type HetznerProvider struct {
 	client *hcloud.Client
 	logger *zap.Logger
 	zone   *hcloud.Zone
+	zoneMu sync.RWMutex
 }
 
 // NewHetznerProvider creates a new Hetzner DNS provider using the official hcloud-go SDK
@@ -28,7 +31,16 @@ func NewHetznerProvider(cfg *config.HetznerConfig, logger *zap.Logger) *HetznerP
 		return nil
 	}
 
-	client := hcloud.NewClient(hcloud.WithToken(cfg.APIToken))
+	// Validate API token
+	token := strings.TrimSpace(cfg.APIToken)
+	if token == "" {
+		if logger != nil {
+			logger.Error("hetzner API token is empty")
+		}
+		return nil
+	}
+
+	client := hcloud.NewClient(hcloud.WithToken(token))
 
 	return &HetznerProvider{
 		config: cfg,
@@ -47,6 +59,12 @@ func NewHetznerProviderWithClient(cfg *config.HetznerConfig, client *hcloud.Clie
 	}
 
 	if client == nil {
+		if cfg.APIToken == "" {
+			if logger != nil {
+				logger.Error("hetzner API token is empty")
+			}
+			return nil
+		}
 		client = hcloud.NewClient(hcloud.WithToken(cfg.APIToken))
 	}
 
@@ -131,6 +149,17 @@ func (h *HetznerProvider) GetRecord(ctx context.Context, name string, rtype stri
 	var value string
 	if len(rrset.Records) > 0 {
 		value = rrset.Records[0].Value
+
+		// Warn if multiple record values exist
+		if len(rrset.Records) > 1 {
+			h.logger.Warn("multiple record values detected, using first value only",
+				zap.String("provider", "hetzner"),
+				zap.String("rrset_name", rrset.Name),
+				zap.String("rrset_id", rrset.ID),
+				zap.Int("record_count", len(rrset.Records)),
+				zap.String("used_value", value),
+			)
+		}
 	}
 
 	var ttl int
@@ -145,8 +174,8 @@ func (h *HetznerProvider) GetRecord(ctx context.Context, name string, rtype stri
 		TTL:      ttl,
 		Provider: "hetzner",
 		Metadata: map[string]string{
-			"hetzner_id": rrset.ID,
-			"zone_id":    h.config.ZoneID,
+			"rrset_id": rrset.ID,
+			"zone_id":  h.config.ZoneID,
 		},
 	}, nil
 }
@@ -208,15 +237,31 @@ func (h *HetznerProvider) Validate(ctx context.Context) error {
 
 // getZone gets or caches the zone
 func (h *HetznerProvider) getZone(ctx context.Context) (*hcloud.Zone, error) {
+	// Take read lock to check cached zone
+	h.zoneMu.RLock()
+	if h.zone != nil {
+		zone := h.zone
+		h.zoneMu.RUnlock()
+		return zone, nil
+	}
+	h.zoneMu.RUnlock()
+
+	// Zone is nil, acquire write lock
+	h.zoneMu.Lock()
+	defer h.zoneMu.Unlock()
+
+	// Re-check zone to avoid TOCTOU (Time-of-Check-Time-of-Use)
 	if h.zone != nil {
 		return h.zone, nil
 	}
 
+	// Fetch zone from API
 	zone, _, err := h.client.Zone.Get(ctx, h.config.ZoneID)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get zone: %w", err)
 	}
 
+	// Cache the zone
 	h.zone = zone
 	return zone, nil
 }

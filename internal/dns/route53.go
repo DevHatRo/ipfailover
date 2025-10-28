@@ -60,6 +60,11 @@ func (r *Route53Provider) UpdateRecord(ctx context.Context, record interfaces.DN
 		zap.String("value", record.Value),
 	)
 
+	// Validate record type is not empty
+	if record.Type == "" {
+		return errors.NewDNSProviderError("route53", record.Name, fmt.Errorf("empty record type"))
+	}
+
 	// First, try to find existing record
 	existingRecord, err := r.findRecord(ctx, record.Name, record.Type)
 	if err != nil {

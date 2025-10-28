@@ -4,12 +4,13 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
-	"time"
 
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/internal/dns"
 	"github.com/devhat/ipfailover/pkg/interfaces"
+	"github.com/hetznercloud/hcloud-go/v2/hcloud"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
 )
@@ -54,26 +55,45 @@ func TestHetznerProvider_Validate(t *testing.T) {
 
 		// Create mock server
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			assert.Equal(t, "GET", r.Method)
-			assert.Equal(t, "/api/v1/records", r.URL.Path)
-			assert.Equal(t, "test-zone", r.URL.Query().Get("zone_id"))
-			assert.Equal(t, "test-token", r.Header.Get("Auth-API-Token"))
-
-			w.WriteHeader(http.StatusOK)
-			if _, err := w.Write([]byte(`{"records":[]}`)); err != nil {
-				t.Errorf("failed to write mock response: %v", err)
+			// Handle zone GET request for validation
+			if r.Method == "GET" && r.URL.Path == "/zones/test-zone" {
+				assert.Equal(t, "Bearer test-token", r.Header.Get("Authorization"))
+				w.WriteHeader(http.StatusOK)
+				if _, err := w.Write([]byte(`{"zone":{"id":12345,"name":"example.com","ttl":3600}}`)); err != nil {
+					t.Errorf("failed to write mock response: %v", err)
+				}
+				return
 			}
+
+			// Handle other requests
+			w.WriteHeader(http.StatusNotFound)
 		}))
 		defer server.Close()
 
-		// Create provider with mock server
-		provider := dns.NewHetznerProviderWithClient(cfg, nil, logger)
+		// Create HTTP client that uses the mock server
+		httpClient := &http.Client{
+			Transport: &http.Transport{
+				Proxy: func(req *http.Request) (*url.URL, error) {
+					return url.Parse(server.URL)
+				},
+			},
+		}
+
+		// Create hcloud client with custom HTTP client
+		hcloudClient := hcloud.NewClient(
+			hcloud.WithToken(cfg.APIToken),
+			hcloud.WithHTTPClient(httpClient),
+			hcloud.WithEndpoint(server.URL),
+		)
+
+		// Create provider with mock client
+		provider := dns.NewHetznerProviderWithClient(cfg, hcloudClient, logger)
 		assert.NotNil(t, provider)
 
 		// Test validation
 		ctx := context.Background()
 		err := provider.Validate(ctx)
-		assert.Error(t, err) // Will fail because we can't mock the hcloud client easily
+		assert.NoError(t, err) // Should succeed with mock server
 	})
 }
 
@@ -225,12 +245,9 @@ func TestHetznerProvider_ErrorHandling(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 		assert.NotNil(t, provider)
 
-		// Test with a context that has a very short deadline
-		ctx, cancel := context.WithTimeout(context.Background(), 1*time.Nanosecond)
-		defer cancel()
-
-		// Wait a bit to ensure the context is expired
-		time.Sleep(1 * time.Millisecond)
+		// Test with cancelled context to trigger error path
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
 
 		record := interfaces.DNSRecord{
 			Name:     "test.example.com",
@@ -242,7 +259,7 @@ func TestHetznerProvider_ErrorHandling(t *testing.T) {
 
 		err := provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "context deadline exceeded")
+		assert.Contains(t, err.Error(), "context canceled")
 	})
 }
 
