@@ -7,8 +7,8 @@ mkdir -p ./bin
 
 echo "Building IP Failover binaries..."
 
-# Get version information
-VERSION=$(git describe --tags --always --dirty 2>/dev/null || echo "dev")
+# Get version information (use VERSION env var if set, otherwise from git)
+VERSION=${VERSION:-$(git describe --tags --always --dirty 2>/dev/null || echo "dev")}
 BUILD_TIME=$(date -u '+%Y-%m-%d_%H:%M:%S')
 
 echo "Version: $VERSION"
