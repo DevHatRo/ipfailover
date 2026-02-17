@@ -286,11 +286,21 @@ make docker-run
 - Health check endpoints for container orchestration
 - State persistence for recovery scenarios
 
+## Releasing
+
+Releases are automated with [Release Please](https://github.com/googleapis/release-please). Use [Conventional Commits](https://www.conventionalcommits.org/) on `main` so that Release Please can version and generate changelogs:
+
+- `feat: ...` → minor release (e.g. 1.1.0)
+- `fix: ...` → patch release (e.g. 1.0.1)
+- `feat!: ...` or `fix!: ...` (breaking) → major release (e.g. 2.0.0)
+
+When there are releasable changes, Release Please opens a "Release PR" that updates `CHANGELOG.md` and the version in `release-please-manifest.json`. Merging that PR creates the Git tag and GitHub release, and the workflow builds binaries and Docker images and attaches them to the release.
+
 ## Contributing
 
 1. Fork the repository
 2. Create a feature branch
-3. Make your changes
+3. Make your changes (use conventional commit messages for easier releasing)
 4. Add tests for new functionality
 5. Ensure tests pass with 60%+ coverage
 6. Submit a pull request

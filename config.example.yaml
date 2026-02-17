@@ -1,0 +1,138 @@
+# IP Failover - Example configuration with all options
+# Copy to config.yaml and fill in your values. Use env vars for secrets (e.g. ${VAR}).
+#
+# Features: IP failover, configurable reachability check, webhook/Slack notifications,
+# SIGHUP config reload (poll_interval, IPs, failover_retries, etc.).
+
+# --- General ---
+
+# How often to check the current public IP (e.g. "30s", "1m")
+poll_interval: "30s"
+
+# HTTP endpoints used to detect the current public IP (first successful response wins)
+check_endpoints:
+  - "https://ifconfig.io/ip"
+  - "https://api.ipify.org"
+  - "https://icanhazip.com"
+
+# Primary IP (preferred when reachable)
+primary_ip: "203.0.113.10"
+
+# Secondary IP (used after failover_retries consecutive primary failures)
+secondary_ip: "198.51.100.77"
+
+# Number of consecutive primary unreachable checks before switching to secondary
+failover_retries: 3
+
+# How to behave when state file read/write fails:
+#   fail_fast             - return error, stop (no failover)
+#   continue_with_warning - log and continue with in-memory counter
+#   immediate_failover    - treat as unrecoverable, switch to secondary immediately
+state_failure_strategy: "continue_with_warning"
+
+# --- Reachability check ---
+
+# TCP port used to verify that an IP is reachable (default: "80")
+reachability_port: "80"
+
+# Timeout for reachability check (e.g. "3s", "5s")
+reachability_timeout: "3s"
+
+# --- State & metrics ---
+
+# Path to JSON file storing last applied IP and failure counts
+state_file: "/var/lib/ipfailover/state.json"
+
+# Address for Prometheus metrics and /health (e.g. ":8080", "0.0.0.0:8080")
+metrics_addr: ":8080"
+
+# --- Notifications (optional) ---
+# Sent when DNS is updated after a failover (from_ip -> to_ip). Omit both to disable.
+
+# Generic webhook: HTTP POST with JSON body on each failover event.
+# Body: {"event":"ip_failover","from_ip":"...","to_ip":"...","reason":"...","timestamp":"..."}
+webhook_url: ""  # e.g. "https://example.com/webhook" or "${WEBHOOK_URL}"
+
+# Slack: incoming webhook URL from Slack app (Incoming Webhooks). Sends a formatted message.
+slack_webhook_url: ""  # e.g. "https://hooks.slack.com/services/T.../B.../..."
+slack_channel: ""      # e.g. "#alerts" (optional; webhook may have default channel)
+
+# --- Logging ---
+
+# Log level: debug, info, warn, error
+log_level: "info"
+
+# --- DNS records ---
+# Each entry defines one record to update. Include the block for your provider only.
+
+dns:
+  # --- Cloudflare ---
+  - name: "home.example.com"
+    type: "A"
+    provider: "cloudflare"
+    ttl: 300
+    cloudflare:
+      api_token: "${CLOUDFLARE_API_TOKEN}"
+      zone_id: "${CLOUDFLARE_ZONE_ID}"
+      proxied: false  # true = orange cloud (proxy through Cloudflare)
+    metadata:
+      description: "optional key-value metadata"
+
+  # --- cPanel ---
+  - name: "api.example.com"
+    type: "A"
+    provider: "cpanel"
+    ttl: 300
+    cpanel:
+      base_url: "https://cpanel.example.com:2083"
+      username: "${CPANEL_USERNAME}"
+      api_token: "${CPANEL_API_TOKEN}"
+      zone: "example.com"
+    metadata: {}
+
+  # --- AWS Route53 ---
+  - name: "app.example.com"
+    type: "A"
+    provider: "route53"
+    ttl: 300
+    route53:
+      access_key_id: "${AWS_ACCESS_KEY_ID}"
+      secret_access_key: "${AWS_SECRET_ACCESS_KEY}"
+      region: "us-east-1"
+      hosted_zone_id: "${AWS_HOSTED_ZONE_ID}"
+    metadata: {}
+
+  # --- Hetzner DNS ---
+  - name: "www.example.com"
+    type: "A"
+    provider: "hetzner"
+    ttl: 300
+    hetzner:
+      api_token: "${HETZNER_API_TOKEN}"
+      zone_id: "${HETZNER_ZONE_ID}"
+    metadata: {}
+
+# --- Minimal single-provider example (uncomment to use) ---
+# poll_interval: "30s"
+# check_endpoints: ["https://ifconfig.io/ip"]
+# primary_ip: "203.0.113.10"
+# secondary_ip: "198.51.100.77"
+# failover_retries: 3
+# state_failure_strategy: "continue_with_warning"
+# reachability_port: "80"
+# reachability_timeout: "3s"
+# state_file: "/var/lib/ipfailover/state.json"
+# metrics_addr: ":8080"
+# webhook_url: ""
+# slack_webhook_url: ""
+# slack_channel: ""
+# log_level: "info"
+# dns:
+#   - name: "dyn.example.com"
+#     type: "A"
+#     provider: "cloudflare"
+#     ttl: 300
+#     cloudflare:
+#       api_token: "${CLOUDFLARE_API_TOKEN}"
+#       zone_id: "${CLOUDFLARE_ZONE_ID}"
+#       proxied: false
