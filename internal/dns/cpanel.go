@@ -45,12 +45,12 @@ type CPanelDNSRecord struct {
 }
 
 // NewCPanelProvider creates a new cPanel DNS provider
-func NewCPanelProvider(cfg *config.CPanelConfig, logger *zap.Logger) *CPanelProvider {
+func NewCPanelProvider(cfg *config.CPanelConfig, logger *zap.Logger) (*CPanelProvider, error) {
 	if cfg == nil {
-		panic("NewCPanelProvider: cfg must not be nil")
+		return nil, fmt.Errorf("cpanel config must not be nil")
 	}
 	if logger == nil {
-		panic("NewCPanelProvider: logger must not be nil")
+		return nil, fmt.Errorf("logger must not be nil")
 	}
 
 	client := &http.Client{
@@ -66,7 +66,7 @@ func NewCPanelProvider(cfg *config.CPanelConfig, logger *zap.Logger) *CPanelProv
 		config: cfg,
 		client: client,
 		logger: logger,
-	}
+	}, nil
 }
 
 // Name returns the provider name

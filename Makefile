@@ -68,6 +68,21 @@ mocks:
 	@echo "Generating mocks..."
 	go generate ./...
 
+# Build Docker image
+docker-build:
+	@echo "Building Docker image..."
+	docker build -t $(IMAGE_NAME):$(TAG) -t $(IMAGE_NAME):latest .
+
+# Build Docker images for all platforms
+docker-build-all:
+	@echo "Building Docker images for all platforms..."
+	docker buildx build --platform linux/amd64,linux/arm64 -t $(IMAGE_NAME):$(TAG) -t $(IMAGE_NAME):latest .
+
+# Run Docker container
+docker-run:
+	@echo "Running Docker container..."
+	docker run --rm -v $(PWD)/config.yaml:/config.yaml $(IMAGE_NAME):latest -config /config.yaml
+
 # Show help
 help:
 	@echo "Available targets:"

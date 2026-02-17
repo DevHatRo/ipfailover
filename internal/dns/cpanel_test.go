@@ -22,7 +22,8 @@ func TestCPanelProvider_Name(t *testing.T) {
 		Zone:     "example.com",
 	}
 
-	provider := dns.NewCPanelProvider(cfg, logger)
+	provider, err := dns.NewCPanelProvider(cfg, logger)
+	assert.NoError(t, err)
 	assert.Equal(t, "cpanel", provider.Name())
 }
 
@@ -36,7 +37,8 @@ func TestCPanelProvider_Validate(t *testing.T) {
 			Zone:     "example.com",
 		}
 
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
 		// Create mock server
 		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -63,9 +65,9 @@ func TestCPanelProvider_CRUDOperations(t *testing.T) {
 	}
 
 	t.Run("GetRecord - network error", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -75,9 +77,9 @@ func TestCPanelProvider_CRUDOperations(t *testing.T) {
 	})
 
 	t.Run("UpdateRecord - network error", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -89,36 +91,36 @@ func TestCPanelProvider_CRUDOperations(t *testing.T) {
 			Provider: "cpanel",
 		}
 
-		err := provider.UpdateRecord(ctx, record)
+		err = provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
 	})
 
 	t.Run("DeleteRecord - network error", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := provider.DeleteRecord(ctx, "test.example.com", "A")
+		err = provider.DeleteRecord(ctx, "test.example.com", "A")
 		assert.Error(t, err)
 	})
 
 	t.Run("Validate - network error", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := provider.Validate(ctx)
+		err = provider.Validate(ctx)
 		assert.Error(t, err)
 	})
 
 	t.Run("GetRecord - empty record type", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -128,13 +130,13 @@ func TestCPanelProvider_CRUDOperations(t *testing.T) {
 	})
 
 	t.Run("DeleteRecord - empty record type", func(t *testing.T) {
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
-		err := provider.DeleteRecord(ctx, "test.example.com", "")
+		err = provider.DeleteRecord(ctx, "test.example.com", "")
 		assert.Error(t, err)
 	})
 }
@@ -149,7 +151,8 @@ func TestCPanelProvider_ErrorHandling(t *testing.T) {
 			Zone:     "example.com",
 		}
 
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
 		// Test with invalid context (should not panic)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -164,7 +167,7 @@ func TestCPanelProvider_ErrorHandling(t *testing.T) {
 		}
 
 		// This should return an error due to cancelled context
-		err := provider.UpdateRecord(ctx, record)
+		err = provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
 	})
 }

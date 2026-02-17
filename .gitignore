@@ -23,6 +23,7 @@ go.work
 /build/
 
 # IDE files
+.cursor/
 .vscode/
 .idea/
 *.swp

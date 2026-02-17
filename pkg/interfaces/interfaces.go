@@ -95,3 +95,20 @@ type MetricsCollector interface {
 	// StartMetricsServer starts the metrics HTTP server
 	StartMetricsServer(ctx context.Context, addr string) error
 }
+
+// FailoverEvent represents an IP failover event for notification purposes
+type FailoverEvent struct {
+	FromIP    string
+	ToIP      string
+	Reason    string
+	Timestamp time.Time
+}
+
+// Notifier defines the interface for sending failover notifications
+type Notifier interface {
+	// Notify sends a notification about a failover event
+	Notify(ctx context.Context, event FailoverEvent) error
+
+	// Name returns the notifier name (e.g., "webhook", "slack")
+	Name() string
+}

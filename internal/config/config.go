@@ -30,11 +30,26 @@ type Config struct {
 	// Options: "fail_fast", "continue_with_warning", "immediate_failover"
 	StateFailureStrategy string `mapstructure:"state_failure_strategy"`
 
+	// ReachabilityPort is the TCP port used for IP reachability checks (default: "80")
+	ReachabilityPort string `mapstructure:"reachability_port"`
+
+	// ReachabilityTimeout is the timeout for reachability checks (default: 3s)
+	ReachabilityTimeout time.Duration `mapstructure:"reachability_timeout"`
+
 	// StateFile is the path to the state persistence file
 	StateFile string `mapstructure:"state_file"`
 
 	// MetricsAddr is the address for the metrics server
 	MetricsAddr string `mapstructure:"metrics_addr"`
+
+	// WebhookURL is the URL for generic webhook notifications (optional)
+	WebhookURL string `mapstructure:"webhook_url"`
+
+	// SlackWebhookURL is the Slack incoming webhook URL (optional)
+	SlackWebhookURL string `mapstructure:"slack_webhook_url"`
+
+	// SlackChannel is the Slack channel for notifications (optional)
+	SlackChannel string `mapstructure:"slack_channel"`
 
 	// LogLevel is the logging level (debug, info, warn, error)
 	LogLevel string `mapstructure:"log_level"`
@@ -136,6 +151,8 @@ func setDefaults() {
 	})
 	viper.SetDefault("failover_retries", 3)
 	viper.SetDefault("state_failure_strategy", "continue_with_warning")
+	viper.SetDefault("reachability_port", "80")
+	viper.SetDefault("reachability_timeout", "3s")
 	viper.SetDefault("state_file", getDefaultStateFilePath())
 	viper.SetDefault("metrics_addr", ":8080")
 	viper.SetDefault("log_level", "info")

@@ -69,7 +69,8 @@ func TestDNSProvider_Interfaces(t *testing.T) {
 			Zone:     "example.com",
 		}
 
-		provider := dns.NewCPanelProvider(cfg, logger)
+		provider, err := dns.NewCPanelProvider(cfg, logger)
+		assert.NoError(t, err)
 
 		// Test that it implements the interface
 		var _ interfaces.DNSProvider = provider

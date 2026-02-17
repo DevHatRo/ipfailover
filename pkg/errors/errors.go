@@ -176,6 +176,6 @@ func NewNotFoundError(resource string, err error) *NotFoundError {
 
 // IsNotFoundError checks if an error is a not found error
 func IsNotFoundError(err error) bool {
-	_, ok := err.(*NotFoundError)
-	return ok
+	var target *NotFoundError
+	return stderrors.As(err, &target)
 }

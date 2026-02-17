@@ -4,20 +4,18 @@ import (
 	"context"
 	"flag"
 	"fmt"
-	"net"
 	"os"
 	"os/signal"
 	"syscall"
-	"time"
 
+	"github.com/devhat/ipfailover/internal/app"
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/internal/dns"
 	"github.com/devhat/ipfailover/internal/ipchecker"
 	"github.com/devhat/ipfailover/internal/metrics"
+	"github.com/devhat/ipfailover/internal/notifier"
 	"github.com/devhat/ipfailover/internal/state"
-	"github.com/devhat/ipfailover/pkg/errors"
 	"github.com/devhat/ipfailover/pkg/interfaces"
-	"go.uber.org/multierr"
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
@@ -28,482 +26,66 @@ var (
 	BuildTime = "unknown"
 )
 
-// Application represents the main application
-type Application struct {
-	config                *config.Config
-	logger                *zap.Logger
-	ipChecker             interfaces.IPChecker
-	dnsProviders          map[string]interfaces.DNSProvider
-	stateStore            interfaces.StateStore
-	metrics               interfaces.MetricsCollector
-	transientFailureCount int // In-memory fallback counter for when persistence fails
-}
-
-// HealthCheck performs a health check and returns the status
-func (app *Application) HealthCheck() error {
-	// Check if we can get the current IP
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	_, err := app.ipChecker.GetCurrentIP(ctx)
-	if err != nil {
-		return fmt.Errorf("IP check failed: %w", err)
-	}
-
-	// Check if state store is accessible
-	_, err = app.stateStore.GetLastAppliedIP(ctx)
-	if err != nil && !errors.IsNotFoundError(err) {
-		return fmt.Errorf("state store check failed: %w", err)
-	}
-
-	return nil
-}
-
-// NewApplication creates a new application instance
-func NewApplication(cfg *config.Config, logger *zap.Logger) (*Application, error) {
-	app := &Application{
-		config:       cfg,
-		logger:       logger,
-		dnsProviders: make(map[string]interfaces.DNSProvider),
-	}
-
-	// Initialize IP checker
-	app.ipChecker = ipchecker.NewHTTPChecker(cfg.CheckEndpoints, logger)
-
-	// Initialize DNS providers
-	for _, dnsConfig := range cfg.DNS {
-		provider, err := app.createDNSProvider(dnsConfig)
-		if err != nil {
-			return nil, fmt.Errorf("failed to create DNS provider for %s: %w", dnsConfig.Name, err)
-		}
-		app.dnsProviders[dnsConfig.Name] = provider
-	}
-
-	// Initialize state store
-	app.stateStore = state.NewFileStateStore(cfg.StateFile, logger)
-
-	// Initialize metrics collector
-	app.metrics = metrics.NewPrometheusCollector(logger)
-
-	return app, nil
-}
-
-// createDNSProvider creates a DNS provider based on configuration
-func (app *Application) createDNSProvider(dnsConfig config.DNSConfig) (interfaces.DNSProvider, error) {
-	switch dnsConfig.Provider {
-	case "cloudflare":
-		if dnsConfig.Cloudflare == nil {
-			return nil, fmt.Errorf("cloudflare configuration is required")
-		}
-		return dns.NewCloudflareProvider(dnsConfig.Cloudflare, app.logger), nil
-	case "cpanel":
-		if dnsConfig.CPanel == nil {
-			return nil, fmt.Errorf("cpanel configuration is required")
-		}
-		return dns.NewCPanelProvider(dnsConfig.CPanel, app.logger), nil
-	case "route53":
-		if dnsConfig.Route53 == nil {
-			return nil, fmt.Errorf("route53 configuration is required")
-		}
-		return dns.NewRoute53Provider(dnsConfig.Route53, app.logger)
-	case "hetzner":
-		if dnsConfig.Hetzner == nil {
-			return nil, fmt.Errorf("hetzner configuration is required")
-		}
-		return dns.NewHetznerProvider(dnsConfig.Hetzner, app.logger), nil
-	default:
-		return nil, fmt.Errorf("unsupported DNS provider: %s", dnsConfig.Provider)
-	}
-}
-
-// Run starts the application
-func (app *Application) Run(ctx context.Context) error {
-	app.logger.Info("starting IP failover daemon")
-
-	// Start metrics server
-	metricsCtx, metricsCancel := context.WithCancel(ctx)
-	defer metricsCancel()
-
-	go func() {
-		if err := app.metrics.StartMetricsServer(metricsCtx, app.config.MetricsAddr); err != nil {
-			app.logger.Error("metrics server error", zap.Error(err))
-		}
-	}()
-
-	// Validate DNS providers
-	for name, provider := range app.dnsProviders {
-		if err := provider.Validate(ctx); err != nil {
-			app.logger.Error("DNS provider validation failed",
-				zap.String("provider", name),
-				zap.Error(err),
-			)
-			return fmt.Errorf("DNS provider %s validation failed: %w", name, err)
-		}
-		app.logger.Info("DNS provider validated successfully",
-			zap.String("provider", name),
-		)
-	}
-
-	// Start main loop
-	ticker := time.NewTicker(app.config.PollInterval)
-	defer ticker.Stop()
-
-	// Run initial check
-	if err := app.checkAndUpdateIP(ctx); err != nil {
-		app.logger.Error("initial IP check failed", zap.Error(err))
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			app.logger.Info("shutting down application")
-			return ctx.Err()
-		case <-ticker.C:
-			if err := app.checkAndUpdateIP(ctx); err != nil {
-				app.logger.Error("IP check failed", zap.Error(err))
-			}
-		}
-	}
-}
-
-// checkAndUpdateIP checks the current IP and updates DNS records if needed
-func (app *Application) checkAndUpdateIP(ctx context.Context) error {
-	app.logger.Debug("checking current IP")
-	app.metrics.IncrementIPChecks()
-
-	// Get current IP
-	currentIP, err := app.ipChecker.GetCurrentIP(ctx)
-	if err != nil {
-		app.metrics.IncrementIPCheckErrors()
-		return errors.NewIPCheckError(app.ipChecker.Name(), err)
-	}
-
-	app.logger.Info("current IP detected",
-		zap.String("ip", currentIP),
-	)
-
-	app.metrics.SetCurrentIP(currentIP)
-
-	// Store check information
-	if err := app.stateStore.SetLastCheckInfo(ctx, currentIP, time.Now()); err != nil {
-		app.logger.Warn("failed to store check info", zap.Error(err))
-	}
-
-	// Check if we need to update
-	lastAppliedIP, err := app.stateStore.GetLastAppliedIP(ctx)
-	if err != nil {
-		app.logger.Warn("failed to get last applied IP", zap.Error(err))
-	}
-
-	// Determine target IP
-	targetIP := app.determineTargetIP(ctx, lastAppliedIP)
-	if targetIP == "" {
-		app.logger.Debug("no target IP determined, skipping update")
-		return nil
-	}
-
-	if lastAppliedIP == targetIP {
-		app.logger.Debug("IP already applied, skipping update",
-			zap.String("ip", targetIP),
-		)
-		return nil
-	}
-
-	// Update DNS records
-	if err := app.updateDNSRecords(ctx, targetIP); err != nil {
-		return fmt.Errorf("failed to update DNS records: %w", err)
-	}
-
-	// Update state
-	if err := app.stateStore.SetLastAppliedIP(ctx, targetIP); err != nil {
-		return fmt.Errorf("failed to update state: %w", err)
-	}
-
-	app.metrics.SetLastChangeTime(time.Now())
-
-	app.logger.Info("IP failover completed successfully",
-		zap.String("from_ip", lastAppliedIP),
-		zap.String("to_ip", targetIP),
-	)
-
-	return nil
-}
-
-// determineTargetIP determines which IP should be used based on active reachability check
-// Implements retry logic: only switches to secondary after configurable number of consecutive failures
-// On first run (lastAppliedIP empty), verifies primary reachability before returning it
-func (app *Application) determineTargetIP(ctx context.Context, lastAppliedIP string) string {
-	// Create a context with a short timeout for reachability checks
-	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
-	defer cancel()
-
-	// Try to reach the primary IP first
-	err := app.checkIPReachability(ctx, app.config.PrimaryIP)
-	if err == nil {
-		// Primary is reachable, reset failure count and use primary
-		if resetErr := app.stateStore.ResetPrimaryFailureCount(ctx); resetErr != nil {
-			app.logger.Error("critical: failed to reset primary failure count - state persistence compromised",
-				zap.Error(resetErr),
-				zap.String("primary_ip", app.config.PrimaryIP),
-				zap.Int("transient_failure_count", app.transientFailureCount),
-			)
-			// Handle based on configured strategy
-			if app.config.StateFailureStrategy == "fail_fast" {
-				app.logger.Fatal("state persistence failure - failing fast as configured")
-			}
-			// Continue with primary but log critical error for monitoring
-		} else {
-			// Successfully reset persisted count - also reset transient counter
-			if app.transientFailureCount > 0 {
-				app.logger.Info("primary IP recovered, resetting transient failure count",
-					zap.String("primary_ip", app.config.PrimaryIP),
-					zap.Int("transient_failure_count", app.transientFailureCount),
-				)
-				app.transientFailureCount = 0
-			}
-		}
-
-		app.logger.Debug("Primary IP is reachable, using primary",
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.Int("transient_failure_count", app.transientFailureCount),
-		)
-		return app.config.PrimaryIP
-	}
-
-	// Primary is unreachable, increment failure count
-	failureCount, getErr := app.stateStore.GetPrimaryFailureCount(ctx)
-	if getErr != nil {
-		app.logger.Error("critical: failed to get primary failure count - failover tracking compromised",
-			zap.Error(getErr),
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.Int("transient_failure_count", app.transientFailureCount),
-		)
-
-		// Handle based on configured strategy
-		switch app.config.StateFailureStrategy {
-		case "fail_fast":
-			app.logger.Fatal("state persistence failure - failing fast as configured")
-		case "immediate_failover":
-			app.logger.Warn("state persistence failure - immediately failing over to secondary",
-				zap.String("primary_ip", app.config.PrimaryIP),
-				zap.String("secondary_ip", app.config.SecondaryIP),
-				zap.Int("transient_failure_count", app.transientFailureCount),
-			)
-			return app.config.SecondaryIP
-		case "continue_with_warning":
-			fallthrough
-		default:
-			// Use transient counter instead of resetting to 0
-			failureCount = 0 // This will be the persisted count
-			app.logger.Warn("using transient failure counter due to state persistence failure",
-				zap.Int("transient_failure_count", app.transientFailureCount),
-				zap.Error(getErr),
-			)
-		}
-	}
-
-	failureCount++
-	if setErr := app.stateStore.SetPrimaryFailureCount(ctx, failureCount); setErr != nil {
-		// Persistence failed - increment transient counter instead of losing the count
-		app.transientFailureCount++
-		app.logger.Error("critical: failed to persist primary failure count - using transient counter",
-			zap.Error(setErr),
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.Int("failure_count", failureCount),
-			zap.Int("transient_failure_count", app.transientFailureCount),
-		)
-
-		// Handle based on configured strategy
-		switch app.config.StateFailureStrategy {
-		case "fail_fast":
-			app.logger.Fatal("state persistence failure - failing fast as configured")
-		case "immediate_failover":
-			app.logger.Warn("state persistence failure - immediately failing over to secondary",
-				zap.String("primary_ip", app.config.PrimaryIP),
-				zap.String("secondary_ip", app.config.SecondaryIP),
-				zap.Int("failure_count", failureCount),
-				zap.Int("transient_failure_count", app.transientFailureCount),
-			)
-			return app.config.SecondaryIP
-		case "continue_with_warning":
-			fallthrough
-		default:
-			// State persistence failed - continue with transient counter
-			app.logger.Warn("continuing with transient failure counter due to persistence failure",
-				zap.Int("transient_failure_count", app.transientFailureCount),
-				zap.Error(setErr),
-			)
-		}
-	} else {
-		// Persistence succeeded - reset transient counter
-		app.transientFailureCount = 0
-	}
-
-	// If we have transient failures, attempt to persist them
-	if app.transientFailureCount > 0 {
-		app.attemptTransientPersistence(ctx, failureCount)
-	}
-
-	// Calculate total failure count including transient failures
-	totalFailureCount := failureCount + app.transientFailureCount
-
-	app.logger.Debug("Primary IP unreachable, incrementing failure count",
-		zap.String("primary_ip", app.config.PrimaryIP),
-		zap.Int("failure_count", failureCount),
-		zap.Int("transient_failure_count", app.transientFailureCount),
-		zap.Int("total_failure_count", totalFailureCount),
-		zap.Int("max_retries", app.config.FailoverRetries),
-		zap.Error(err),
-	)
-
-	// Check if we've exceeded the retry threshold (including transient failures)
-	if totalFailureCount >= app.config.FailoverRetries {
-		app.logger.Warn("Primary IP exceeded retry threshold, falling back to secondary",
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.String("secondary_ip", app.config.SecondaryIP),
-			zap.Int("failure_count", failureCount),
-			zap.Int("transient_failure_count", app.transientFailureCount),
-			zap.Int("total_failure_count", totalFailureCount),
-			zap.Int("max_retries", app.config.FailoverRetries),
-		)
-		return app.config.SecondaryIP
-	}
-
-	// Still within retry threshold, but check if this is first run
-	if lastAppliedIP == "" {
-		// First run: primary is unreachable, check if secondary is reachable before using it
-		app.logger.Error("First run detected with unreachable primary - checking secondary IP reachability",
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.String("secondary_ip", app.config.SecondaryIP),
-			zap.Int("failure_count", failureCount),
-			zap.Int("max_retries", app.config.FailoverRetries),
-		)
-
-		// Check if secondary IP is reachable
-		err := app.checkIPReachability(ctx, app.config.SecondaryIP)
-		if err != nil {
-			app.logger.Error("Secondary IP is also unreachable - skipping DNS update to avoid pointing to unreachable host",
-				zap.String("primary_ip", app.config.PrimaryIP),
-				zap.String("secondary_ip", app.config.SecondaryIP),
-				zap.Int("failure_count", failureCount),
-				zap.Int("max_retries", app.config.FailoverRetries),
-				zap.Error(err),
-			)
-			// Return empty string to skip DNS update
-			return ""
-		}
-
-		app.logger.Info("Secondary IP is reachable - using secondary IP for DNS update",
-			zap.String("primary_ip", app.config.PrimaryIP),
-			zap.String("secondary_ip", app.config.SecondaryIP),
-			zap.Int("failure_count", failureCount),
-			zap.Int("max_retries", app.config.FailoverRetries),
-		)
-		// Return secondary IP to ensure DNS points to a reachable host
-		return app.config.SecondaryIP
-	}
-
-	// Not first run: still within retry threshold, continue using primary
-	app.logger.Debug("Primary IP still within retry threshold, continuing with primary",
-		zap.String("primary_ip", app.config.PrimaryIP),
-		zap.Int("failure_count", failureCount),
-		zap.Int("max_retries", app.config.FailoverRetries),
-	)
-	return app.config.PrimaryIP
-}
-
-// checkIPReachability attempts to verify connectivity to the given IP address
-func (app *Application) checkIPReachability(ctx context.Context, ip string) error {
-	// Try to establish a TCP connection to a common port (80 for HTTP)
-	conn, err := net.DialTimeout("tcp", net.JoinHostPort(ip, "80"), 3*time.Second)
-	if err != nil {
-		return fmt.Errorf("failed to connect to %s:80: %w", ip, err)
-	}
-	defer func() {
-		if closeErr := conn.Close(); closeErr != nil {
-			app.logger.Debug("failed to close connection", zap.Error(closeErr))
-		}
-	}()
-
-	// Connection successful
-	return nil
-}
-
-// updateDNSRecords updates all configured DNS records
-func (app *Application) updateDNSRecords(ctx context.Context, targetIP string) error {
-	var errs error
-
-	for _, dnsConfig := range app.config.DNS {
-		provider, exists := app.dnsProviders[dnsConfig.Name]
-		if !exists {
-			app.logger.Error("DNS provider not found",
-				zap.String("record", dnsConfig.Name),
-			)
-			errs = multierr.Append(errs, fmt.Errorf("DNS provider not found for record %s", dnsConfig.Name))
-			continue
-		}
-
-		record := interfaces.DNSRecord{
-			Name:     dnsConfig.Name,
-			Type:     dnsConfig.Type,
-			Value:    targetIP,
-			TTL:      dnsConfig.TTL,
-			Provider: dnsConfig.Provider,
-			Metadata: dnsConfig.Metadata,
-		}
-
-		if err := provider.UpdateRecord(ctx, record); err != nil {
-			app.metrics.IncrementDNSErrors(dnsConfig.Provider, dnsConfig.Name)
-			app.logger.Error("failed to update DNS record",
-				zap.String("provider", dnsConfig.Provider),
-				zap.String("record", dnsConfig.Name),
-				zap.String("ip", targetIP),
-				zap.Error(err),
-			)
-			errs = multierr.Append(errs, fmt.Errorf("failed to update DNS record %s with provider %s: %w", dnsConfig.Name, dnsConfig.Provider, err))
-			continue
-		}
-
-		app.metrics.IncrementDNSUpdates(dnsConfig.Provider, dnsConfig.Name)
-		app.logger.Info("DNS record updated successfully",
-			zap.String("provider", dnsConfig.Provider),
-			zap.String("record", dnsConfig.Name),
-			zap.String("ip", targetIP),
-		)
-	}
-
-	return errs
-}
-
-// attemptTransientPersistence attempts to persist transient failure count when possible
-func (app *Application) attemptTransientPersistence(ctx context.Context, persistedCount int) {
-	// Calculate the total count we want to persist
-	totalCount := persistedCount + app.transientFailureCount
-
-	// Attempt to persist the total count
-	if err := app.stateStore.SetPrimaryFailureCount(ctx, totalCount); err != nil {
-		app.logger.Debug("failed to persist transient failure count - will retry later",
-			zap.Error(err),
-			zap.Int("transient_failure_count", app.transientFailureCount),
-			zap.Int("total_count", totalCount),
-		)
-	} else {
-		// Successfully persisted - reset transient counter
-		app.logger.Info("successfully persisted transient failure count",
-			zap.Int("transient_failure_count", app.transientFailureCount),
-			zap.Int("total_count", totalCount),
-		)
-		app.transientFailureCount = 0
-	}
-}
-
 // getVersion returns the application version
 func getVersion() string {
 	return fmt.Sprintf("%s (built %s)", Version, BuildTime)
 }
 
+// createDNSProvider creates a DNS provider based on configuration using the registry
+func createDNSProvider(dnsConfig config.DNSConfig, logger *zap.Logger) (interfaces.DNSProvider, error) {
+	return dns.CreateProvider(&dnsConfig, logger)
+}
+
+// buildApplication wires together all dependencies and creates an Application
+func buildApplication(cfg *config.Config, logger *zap.Logger) (*app.Application, error) {
+	// Initialize DNS providers
+	dnsProviders := make(map[string]interfaces.DNSProvider)
+	for _, dnsConfig := range cfg.DNS {
+		provider, err := createDNSProvider(dnsConfig, logger)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create DNS provider for %s: %w", dnsConfig.Name, err)
+		}
+		dnsProviders[dnsConfig.Name] = provider
+	}
+
+	ipCheck := ipchecker.NewHTTPChecker(cfg.CheckEndpoints, logger)
+	stateStore := state.NewFileStateStore(cfg.StateFile, logger)
+	metricsCollector := metrics.NewPrometheusCollector(logger)
+	reachabilityChecker := app.NewTCPReachabilityChecker(
+		cfg.ReachabilityPort,
+		cfg.ReachabilityTimeout,
+		logger,
+	)
+
+	// Build notifiers
+	var notifiers []interfaces.Notifier
+	if cfg.WebhookURL != "" {
+		notifiers = append(notifiers, notifier.NewWebhookNotifier(cfg.WebhookURL, logger))
+	}
+	if cfg.SlackWebhookURL != "" {
+		notifiers = append(notifiers, notifier.NewSlackNotifier(cfg.SlackWebhookURL, cfg.SlackChannel, logger))
+	}
+
+	var n interfaces.Notifier
+	if len(notifiers) > 0 {
+		n = notifier.NewMultiNotifier(logger, notifiers...)
+	} else {
+		n = &notifier.NopNotifier{}
+	}
+
+	return app.NewApplication(
+		cfg,
+		logger,
+		ipCheck,
+		dnsProviders,
+		stateStore,
+		metricsCollector,
+		reachabilityChecker,
+		n,
+	), nil
+}
+
 func main() {
-	// Define command line flags
 	var (
 		configFile  = flag.String("config", "", "Path to configuration file")
 		healthCheck = flag.Bool("health-check", false, "Perform health check and exit")
@@ -513,7 +95,6 @@ func main() {
 
 	flag.Parse()
 
-	// Handle help flag
 	if *help {
 		fmt.Printf("IP Failover - Automatic DNS failover service\n\n")
 		fmt.Printf("Usage: %s [options]\n\n", os.Args[0])
@@ -526,42 +107,36 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Handle version flag
 	if *version {
 		fmt.Printf("IP Failover version: %s\n", getVersion())
 		os.Exit(0)
 	}
 
-	// Handle health check flag
 	if *healthCheck {
 		if *configFile == "" {
 			fmt.Fprintf(os.Stderr, "Error: -config flag is required for health check\n")
 			os.Exit(1)
 		}
 
-		// Load minimal configuration for health check
 		cfg, err := config.LoadConfig(*configFile)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Setup minimal logging for health check
 		logger, err := setupLogging(cfg.LogLevel)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to setup logging: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Create application for health check
-		app, err := NewApplication(cfg, logger)
+		application, err := buildApplication(cfg, logger)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Failed to create application: %v\n", err)
 			os.Exit(1)
 		}
 
-		// Perform health check
-		if err := app.HealthCheck(); err != nil {
+		if err := application.HealthCheck(); err != nil {
 			fmt.Fprintf(os.Stderr, "Health check failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -570,21 +145,18 @@ func main() {
 		os.Exit(0)
 	}
 
-	// Validate required config file
 	if *configFile == "" {
 		fmt.Fprintf(os.Stderr, "Error: -config flag is required\n")
 		fmt.Fprintf(os.Stderr, "Use -help for usage information\n")
 		os.Exit(1)
 	}
 
-	// Load configuration
 	cfg, err := config.LoadConfig(*configFile)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to load configuration: %v\n", err)
 		os.Exit(1)
 	}
 
-	// Setup logging
 	logger, err := setupLogging(cfg.LogLevel)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to setup logging: %v\n", err)
@@ -601,29 +173,63 @@ func main() {
 		zap.String("log_level", cfg.LogLevel),
 	)
 
-	// Create application
-	app, err := NewApplication(cfg, logger)
+	application, err := buildApplication(cfg, logger)
 	if err != nil {
 		logger.Fatal("Failed to create application", zap.Error(err))
 	}
 
-	// Setup signal handling
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	sigChan := make(chan os.Signal, 1)
-	signal.Notify(sigChan, syscall.SIGINT, syscall.SIGTERM)
+	// Handle SIGINT/SIGTERM for shutdown
+	shutdownChan := make(chan os.Signal, 1)
+	signal.Notify(shutdownChan, syscall.SIGINT, syscall.SIGTERM)
+
+	// Handle SIGHUP for config reload
+	reloadChan := make(chan os.Signal, 1)
+	signal.Notify(reloadChan, syscall.SIGHUP)
 
 	go func() {
-		sig := <-sigChan
-		logger.Info("Received signal, shutting down",
-			zap.String("signal", sig.String()),
-		)
-		cancel()
+		for {
+			select {
+			case sig := <-shutdownChan:
+				logger.Info("Received shutdown signal",
+					zap.String("signal", sig.String()),
+				)
+				cancel()
+				return
+			case <-reloadChan:
+				logger.Info("Received SIGHUP, reloading configuration")
+				newCfg, err := config.LoadConfig(*configFile)
+				if err != nil {
+					logger.Error("Failed to reload configuration, keeping current config",
+						zap.Error(err),
+					)
+					continue
+				}
+
+				// Update mutable config fields on the running application
+				application.Config.PollInterval = newCfg.PollInterval
+				application.Config.FailoverRetries = newCfg.FailoverRetries
+				application.Config.PrimaryIP = newCfg.PrimaryIP
+				application.Config.SecondaryIP = newCfg.SecondaryIP
+				application.Config.StateFailureStrategy = newCfg.StateFailureStrategy
+				application.Config.ReachabilityPort = newCfg.ReachabilityPort
+				application.Config.ReachabilityTimeout = newCfg.ReachabilityTimeout
+
+				logger.Info("Configuration reloaded successfully",
+					zap.String("primary_ip", newCfg.PrimaryIP),
+					zap.String("secondary_ip", newCfg.SecondaryIP),
+					zap.Duration("poll_interval", newCfg.PollInterval),
+					zap.Int("failover_retries", newCfg.FailoverRetries),
+				)
+			case <-ctx.Done():
+				return
+			}
+		}
 	}()
 
-	// Run application
-	if err := app.Run(ctx); err != nil && err != context.Canceled {
+	if err := application.Run(ctx); err != nil && err != context.Canceled {
 		logger.Fatal("Application error", zap.Error(err))
 	}
 
@@ -632,23 +238,23 @@ func main() {
 
 // setupLogging configures logging based on the log level
 func setupLogging(level string) (*zap.Logger, error) {
-	config := zap.NewProductionConfig()
+	cfg := zap.NewProductionConfig()
 
 	switch level {
 	case "debug":
-		config.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
+		cfg.Level = zap.NewAtomicLevelAt(zap.DebugLevel)
 	case "info":
-		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		cfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	case "warn":
-		config.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
+		cfg.Level = zap.NewAtomicLevelAt(zap.WarnLevel)
 	case "error":
-		config.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
+		cfg.Level = zap.NewAtomicLevelAt(zap.ErrorLevel)
 	default:
-		config.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
+		cfg.Level = zap.NewAtomicLevelAt(zap.InfoLevel)
 	}
 
-	config.EncoderConfig.TimeKey = "timestamp"
-	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
+	cfg.EncoderConfig.TimeKey = "timestamp"
+	cfg.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	return config.Build()
+	return cfg.Build()
 }
