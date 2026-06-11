@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.2](https://github.com/DevHatRo/ipfailover/compare/v0.8.1...v0.8.2) (2026-06-11)
+
+
+### Bug Fixes
+
+* race condition, linter, tests, and CI improvements ([#90](https://github.com/DevHatRo/ipfailover/issues/90)) ([d12eeb9](https://github.com/DevHatRo/ipfailover/commit/d12eeb945502307b6177e74de80dd53e220e1582))
+
 ## [0.8.1](https://github.com/DevHatRo/ipfailover/compare/v0.8.0...v0.8.1) (2026-02-17)
 
 
