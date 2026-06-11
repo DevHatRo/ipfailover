@@ -52,7 +52,7 @@ func TestCloudflareProvider_CRUDOperations(t *testing.T) {
 	t.Run("GetRecord - network error", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -64,7 +64,7 @@ func TestCloudflareProvider_CRUDOperations(t *testing.T) {
 	t.Run("UpdateRecord - network error", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -83,7 +83,7 @@ func TestCloudflareProvider_CRUDOperations(t *testing.T) {
 	t.Run("DeleteRecord - network error", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -94,7 +94,7 @@ func TestCloudflareProvider_CRUDOperations(t *testing.T) {
 	t.Run("Validate - network error", func(t *testing.T) {
 		provider := dns.NewCloudflareProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -148,7 +148,7 @@ func TestCloudflareProvider_ErrorHandling(t *testing.T) {
 			Provider: "cloudflare",
 		}
 
-		// This should return an error due to cancelled context
+		// This should return an error due to canceled context
 		err := provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
 	})

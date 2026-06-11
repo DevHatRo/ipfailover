@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/devhat/ipfailover/internal/config"
@@ -13,6 +14,8 @@ import (
 
 // Application represents the main application
 type Application struct {
+	// Config is guarded by configMu: read it via Cfg() and replace it via
+	// ReloadConfig() once the daemon is running.
 	Config                *config.Config
 	Logger                *zap.Logger
 	IPChecker             interfaces.IPChecker
@@ -22,6 +25,9 @@ type Application struct {
 	ReachabilityChecker   ReachabilityChecker
 	Notifier              interfaces.Notifier
 	TransientFailureCount int // In-memory fallback counter for when persistence fails
+
+	configMu sync.RWMutex
+	reloadCh chan struct{}
 }
 
 // ReachabilityChecker defines the interface for IP reachability checks
@@ -49,6 +55,39 @@ func NewApplication(
 		Metrics:             metricsCollector,
 		ReachabilityChecker: reachabilityChecker,
 		Notifier:            notifier,
+		reloadCh:            make(chan struct{}, 1),
+	}
+}
+
+// Cfg returns the current configuration. Callers must take a single snapshot
+// per operation instead of reading app.Config directly, because ReloadConfig
+// may swap the pointer concurrently.
+func (app *Application) Cfg() *config.Config {
+	app.configMu.RLock()
+	defer app.configMu.RUnlock()
+	return app.Config
+}
+
+// ReloadConfig atomically applies the runtime-mutable fields from newCfg and
+// signals the run loop so a changed poll interval takes effect immediately.
+func (app *Application) ReloadConfig(newCfg *config.Config) {
+	app.configMu.Lock()
+	updated := *app.Config
+	updated.PollInterval = newCfg.PollInterval
+	updated.FailoverRetries = newCfg.FailoverRetries
+	updated.PrimaryIP = newCfg.PrimaryIP
+	updated.SecondaryIP = newCfg.SecondaryIP
+	updated.StateFailureStrategy = newCfg.StateFailureStrategy
+	updated.ReachabilityPort = newCfg.ReachabilityPort
+	updated.ReachabilityTimeout = newCfg.ReachabilityTimeout
+	app.Config = &updated
+	app.configMu.Unlock()
+
+	if app.reloadCh != nil {
+		select {
+		case app.reloadCh <- struct{}{}:
+		default:
+		}
 	}
 }
 
@@ -79,7 +118,7 @@ func (app *Application) Run(ctx context.Context) error {
 	defer metricsCancel()
 
 	go func() {
-		if err := app.Metrics.StartMetricsServer(metricsCtx, app.Config.MetricsAddr); err != nil {
+		if err := app.Metrics.StartMetricsServer(metricsCtx, app.Cfg().MetricsAddr); err != nil {
 			app.Logger.Error("metrics server error", zap.Error(err))
 		}
 	}()
@@ -99,7 +138,8 @@ func (app *Application) Run(ctx context.Context) error {
 	}
 
 	// Start main loop
-	ticker := time.NewTicker(app.Config.PollInterval)
+	pollInterval := app.Cfg().PollInterval
+	ticker := time.NewTicker(pollInterval)
 	defer ticker.Stop()
 
 	// Run initial check
@@ -112,6 +152,15 @@ func (app *Application) Run(ctx context.Context) error {
 		case <-ctx.Done():
 			app.Logger.Info("shutting down application")
 			return ctx.Err()
+		case <-app.reloadCh:
+			if newInterval := app.Cfg().PollInterval; newInterval != pollInterval {
+				ticker.Reset(newInterval)
+				app.Logger.Info("poll interval updated",
+					zap.Duration("old_interval", pollInterval),
+					zap.Duration("new_interval", newInterval),
+				)
+				pollInterval = newInterval
+			}
 		case <-ticker.C:
 			if err := app.CheckAndUpdateIP(ctx); err != nil {
 				app.Logger.Error("IP check failed", zap.Error(err))

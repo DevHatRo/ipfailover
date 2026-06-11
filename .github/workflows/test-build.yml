@@ -18,35 +18,48 @@ on:
       - "README.md"
       - "README"
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build App for Testing
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0
 
       - name: Set up Go
-        uses: actions/setup-go@v6
+        uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6
         with:
           go-version: "1.26"
           cache: true
 
-      - name: Update Go dependencies
+      - name: Verify Go dependencies
         run: |
           go mod tidy
+          git diff --exit-code go.mod go.sum
 
-      - name: Run Tests
+      - name: Run Linters
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9
+        with:
+          version: latest
+
+      - name: Run Tests (race detector)
         run: |
-          go test ./... -v
+          go test -race -v ./...
+
+      - name: Check Test Coverage
+        run: |
+          make test-coverage-check
 
       - name: Build Binary
         run: |
           ./scripts/build.sh
 
       - name: Upload Test Artifacts
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: test-build-artifacts
           path: bin/

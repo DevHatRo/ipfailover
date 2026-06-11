@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"time"
 
@@ -89,6 +90,10 @@ func (s *SlackNotifier) Notify(ctx context.Context, event interfaces.FailoverEve
 		return fmt.Errorf("slack request failed: %w", err)
 	}
 	defer resp.Body.Close()
+	// Drain (bounded) so the keep-alive connection can be reused
+	if _, err := io.Copy(io.Discard, io.LimitReader(resp.Body, 4096)); err != nil {
+		s.logger.Debug("failed to drain slack response body", zap.Error(err))
+	}
 
 	if resp.StatusCode >= 400 {
 		return fmt.Errorf("slack returned HTTP %d", resp.StatusCode)

@@ -17,10 +17,25 @@ spec:
         app: ipfailover
     spec:
       serviceAccountName: ipfailover
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
       containers:
         - name: ipfailover
-          image: ipfailover:latest
+          # Pin to a specific release tag, e.g. v0.8.1
+          image: ghcr.io/devhat/ipfailover:v0.8.1
           imagePullPolicy: IfNotPresent
+          args:
+            - "-config"
+            - "/etc/ipfailover/config.yaml"
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
           ports:
             - containerPort: 8080
               name: metrics
@@ -30,7 +45,7 @@ spec:
                 secretKeyRef:
                   name: ipfailover-secrets
                   key: cloudflare-api-token
-            - name: CLODFLARE_ZONE_ID
+            - name: CLOUDFLARE_ZONE_ID
               valueFrom:
                 secretKeyRef:
                   name: ipfailover-secrets

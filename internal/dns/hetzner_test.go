@@ -108,7 +108,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("GetRecord - network error", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -120,7 +120,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("UpdateRecord - network error", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -139,7 +139,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("DeleteRecord - network error", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -150,7 +150,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("Validate - network error", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -161,7 +161,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("GetRecord - empty record type", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -173,7 +173,7 @@ func TestHetznerProvider_CRUDOperations(t *testing.T) {
 	t.Run("DeleteRecord - empty record type", func(t *testing.T) {
 		provider := dns.NewHetznerProvider(cfg, logger)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 

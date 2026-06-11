@@ -54,7 +54,7 @@ func TestRoute53Provider_CRUDOperations(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -67,7 +67,7 @@ func TestRoute53Provider_CRUDOperations(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -87,7 +87,7 @@ func TestRoute53Provider_CRUDOperations(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 
@@ -99,7 +99,7 @@ func TestRoute53Provider_CRUDOperations(t *testing.T) {
 		provider, err := dns.NewRoute53Provider(cfg, logger)
 		assert.NoError(t, err)
 
-		// Test with cancelled context to trigger error path
+		// Test with canceled context to trigger error path
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
 

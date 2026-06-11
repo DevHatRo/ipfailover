@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -209,13 +210,7 @@ func main() {
 				}
 
 				// Update mutable config fields on the running application
-				application.Config.PollInterval = newCfg.PollInterval
-				application.Config.FailoverRetries = newCfg.FailoverRetries
-				application.Config.PrimaryIP = newCfg.PrimaryIP
-				application.Config.SecondaryIP = newCfg.SecondaryIP
-				application.Config.StateFailureStrategy = newCfg.StateFailureStrategy
-				application.Config.ReachabilityPort = newCfg.ReachabilityPort
-				application.Config.ReachabilityTimeout = newCfg.ReachabilityTimeout
+				application.ReloadConfig(newCfg)
 
 				logger.Info("Configuration reloaded successfully",
 					zap.String("primary_ip", newCfg.PrimaryIP),
@@ -229,7 +224,7 @@ func main() {
 		}
 	}()
 
-	if err := application.Run(ctx); err != nil && err != context.Canceled {
+	if err := application.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		logger.Fatal("Application error", zap.Error(err))
 	}
 

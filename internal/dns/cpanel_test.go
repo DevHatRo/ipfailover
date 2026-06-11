@@ -166,7 +166,7 @@ func TestCPanelProvider_ErrorHandling(t *testing.T) {
 			Provider: "cpanel",
 		}
 
-		// This should return an error due to cancelled context
+		// This should return an error due to canceled context
 		err = provider.UpdateRecord(ctx, record)
 		assert.Error(t, err)
 	})

@@ -164,9 +164,9 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 	if len(records.Result) > 0 {
 		// Update existing record
 		existingRecord := records.Result[0]
-		recordParam, err := c.createRecordParam(record)
-		if err != nil {
-			return errors.NewDNSProviderError("cloudflare", record.Name, err)
+		recordParam, paramErr := c.createRecordParam(record)
+		if paramErr != nil {
+			return errors.NewDNSProviderError("cloudflare", record.Name, paramErr)
 		}
 		_, err = c.client.DNS.Records.Update(ctx, existingRecord.ID, dns.RecordUpdateParams{
 			ZoneID: cloudflare.String(c.config.ZoneID),
@@ -233,10 +233,15 @@ func (c *CloudflareProvider) GetRecord(ctx context.Context, name string, rtype s
 
 	// Return the first matching record
 	record := records.Result[0]
+	content, ok := record.Content.(string)
+	if !ok {
+		return nil, errors.NewDNSProviderError("cloudflare", record.Name,
+			fmt.Errorf("unexpected content type %T for record", record.Content))
+	}
 	return &interfaces.DNSRecord{
 		Name:     record.Name,
 		Type:     string(record.Type),
-		Value:    record.Content.(string),
+		Value:    content,
 		TTL:      int(record.TTL),
 		Provider: "cloudflare",
 		Metadata: map[string]string{

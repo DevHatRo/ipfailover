@@ -2,6 +2,7 @@ package metrics
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"time"
@@ -144,8 +145,9 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 	}
 
 	server := &http.Server{
-		Addr:    addr,
-		Handler: mux,
+		Addr:              addr,
+		Handler:           mux,
+		ReadHeaderTimeout: 10 * time.Second,
 	}
 
 	pc.logger.Info("starting metrics server",
@@ -164,7 +166,7 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 	select {
 	case err := <-errCh:
 		// Server error occurred
-		if err != nil && err != http.ErrServerClosed {
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
 			pc.logger.Error("metrics server error",
 				zap.Error(err),
 			)
@@ -172,11 +174,11 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 		}
 		return nil
 	case <-ctx.Done():
-		// Context cancelled, shutdown server
+		// Context canceled, shutdown server
 		pc.logger.Info("shutting down metrics server")
 
-		// Shutdown server with timeout
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		// Shutdown server with timeout, detached from the already-canceled parent
+		shutdownCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
 		defer cancel()
 
 		if err := server.Shutdown(shutdownCtx); err != nil {
@@ -189,7 +191,7 @@ func (pc *PrometheusCollector) StartMetricsServer(ctx context.Context, addr stri
 		// Wait for server goroutine to finish
 		select {
 		case err := <-errCh:
-			if err != nil && err != http.ErrServerClosed {
+			if err != nil && !errors.Is(err, http.ErrServerClosed) {
 				return err
 			}
 		case <-time.After(6 * time.Second):

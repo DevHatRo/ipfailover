@@ -250,7 +250,7 @@ func (f *FileStateStore) saveState(ctx context.Context, state *State) error {
 
 	// Write to temporary file first
 	tempFile := f.filePath + ".tmp"
-	if err := os.WriteFile(tempFile, data, 0644); err != nil {
+	if err := os.WriteFile(tempFile, data, 0600); err != nil {
 		return fmt.Errorf("failed to write temporary state file: %w", err)
 	}
 

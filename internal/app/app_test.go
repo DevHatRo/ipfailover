@@ -483,3 +483,116 @@ func TestHealthCheck_IPCheckFails(t *testing.T) {
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "IP check failed")
 }
+
+func TestCheckAndUpdateIP_PartialDNSFailure_DoesNotPersistState(t *testing.T) {
+	okProvider := newMockDNSProvider("ok")
+	failProvider := newMockDNSProvider("fail")
+	failProvider.updateErr = fmt.Errorf("API error")
+
+	ss := newMockStateStore()
+	ss.lastAppliedIP = "10.0.0.1"
+
+	reachability := newMockReachability()
+	reachability.SetReachable("10.0.0.2", true)
+
+	a := newTestApp(func(a *Application) {
+		a.Config.DNS = []config.DNSConfig{
+			{Name: "ok.example.com", Type: "A", Provider: "mock", TTL: 300},
+			{Name: "fail.example.com", Type: "A", Provider: "mock", TTL: 300},
+		}
+		a.DNSProviders = map[string]interfaces.DNSProvider{
+			"ok.example.com":   okProvider,
+			"fail.example.com": failProvider,
+		}
+		a.StateStore = ss
+		a.Config.FailoverRetries = 1
+		a.ReachabilityChecker = reachability
+	})
+
+	err := a.CheckAndUpdateIP(context.Background())
+	require.Error(t, err)
+
+	// One provider succeeded, but state must not record the new IP so the
+	// next poll retries all providers.
+	lastApplied, err := ss.GetLastAppliedIP(context.Background())
+	require.NoError(t, err)
+	assert.Equal(t, "10.0.0.1", lastApplied)
+}
+
+func TestReloadConfig_AppliesMutableFields(t *testing.T) {
+	a := NewApplication(
+		newTestApp().Config,
+		zap.NewNop(),
+		&mockIPChecker{ip: "10.0.0.1"},
+		map[string]interfaces.DNSProvider{},
+		newMockStateStore(),
+		newMockMetrics(),
+		newMockReachability(),
+		&mockNotifier{},
+	)
+
+	newCfg := &config.Config{
+		PollInterval:         10 * time.Second,
+		FailoverRetries:      7,
+		PrimaryIP:            "10.1.0.1",
+		SecondaryIP:          "10.1.0.2",
+		StateFailureStrategy: "fail_fast",
+		ReachabilityPort:     "443",
+		ReachabilityTimeout:  9 * time.Second,
+		// Immutable fields must be ignored by reload
+		MetricsAddr: ":9999",
+	}
+	a.ReloadConfig(newCfg)
+
+	got := a.Cfg()
+	assert.Equal(t, 10*time.Second, got.PollInterval)
+	assert.Equal(t, 7, got.FailoverRetries)
+	assert.Equal(t, "10.1.0.1", got.PrimaryIP)
+	assert.Equal(t, "10.1.0.2", got.SecondaryIP)
+	assert.Equal(t, "fail_fast", got.StateFailureStrategy)
+	assert.Equal(t, "443", got.ReachabilityPort)
+	assert.Equal(t, 9*time.Second, got.ReachabilityTimeout)
+	assert.Equal(t, ":0", got.MetricsAddr, "non-mutable fields must be preserved")
+
+	// Reload signal should be queued for the run loop
+	select {
+	case <-a.reloadCh:
+	default:
+		t.Fatal("expected reload signal on reloadCh")
+	}
+}
+
+func TestReloadConfig_ConcurrentWithReads(t *testing.T) {
+	a := newTestApp(func(a *Application) {
+		a.reloadCh = make(chan struct{}, 1)
+	})
+
+	var wg sync.WaitGroup
+	stop := make(chan struct{})
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 200; i++ {
+			newCfg := *a.Cfg()
+			newCfg.PrimaryIP = fmt.Sprintf("10.0.%d.1", i%250)
+			a.ReloadConfig(&newCfg)
+		}
+		close(stop)
+	}()
+
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				_, _ = a.DetermineTargetIP(context.Background(), "10.0.0.1")
+			}
+		}
+	}()
+
+	wg.Wait()
+}
