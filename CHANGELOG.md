@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.8.3](https://github.com/DevHatRo/ipfailover/compare/v0.8.2...v0.8.3) (2026-06-18)
+
+
+### Dependencies
+
+* **deps:** bump github.com/hetznercloud/hcloud-go/v2 ([#89](https://github.com/DevHatRo/ipfailover/issues/89)) ([604d399](https://github.com/DevHatRo/ipfailover/commit/604d39979ceab0550cfb98967b98c3e30aeb0abe))
+* **deps:** bump go.uber.org/zap from 1.27.1 to 1.28.0 ([#85](https://github.com/DevHatRo/ipfailover/issues/85)) ([a752255](https://github.com/DevHatRo/ipfailover/commit/a75225539526ea6bf4614049a478c5752528f327))
+
 ## [0.8.2](https://github.com/DevHatRo/ipfailover/compare/v0.8.1...v0.8.2) (2026-06-11)
 
 
