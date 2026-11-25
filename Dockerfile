@@ -1,5 +1,5 @@
 # Docker image for IP Failover
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian13:nonroot
 
 ENV APP_NAME=ipfailover
 ENV APP_ENV=production
