@@ -1,7 +1,5 @@
 # IP Failover Docker Compose
 
-version: "3.8"
-
 services:
   ipfailover:
     build: .
@@ -20,6 +18,7 @@ services:
     healthcheck:
       test:
         [
+          "CMD",
           "/app/ipfailover",
           "-health-check",
           "-config",
