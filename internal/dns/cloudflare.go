@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"strconv"
 
-	"github.com/cloudflare/cloudflare-go/v2"
-	"github.com/cloudflare/cloudflare-go/v2/dns"
-	"github.com/cloudflare/cloudflare-go/v2/option"
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/dns"
+	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/pkg/errors"
 	"github.com/devhat/ipfailover/pkg/interfaces"
@@ -68,8 +68,14 @@ func (c *CloudflareProvider) Name() string {
 	return "cloudflare"
 }
 
-// createRecordParam creates the appropriate RecordUnionParam based on the record type
-func (c *CloudflareProvider) createRecordParam(record interfaces.DNSRecord) (dns.RecordUnionParam, error) {
+// recordBody is a record param accepted by both the create and update endpoints.
+type recordBody interface {
+	dns.RecordNewParamsBodyUnion
+	dns.RecordUpdateParamsBodyUnion
+}
+
+// createRecordParam creates the appropriate record body based on the record type
+func (c *CloudflareProvider) createRecordParam(record interfaces.DNSRecord) (recordBody, error) {
 	switch record.Type {
 	case "A":
 		return dns.ARecordParam{
@@ -91,7 +97,7 @@ func (c *CloudflareProvider) createRecordParam(record interfaces.DNSRecord) (dns
 		return dns.CNAMERecordParam{
 			Name:    cloudflare.String(record.Name),
 			Type:    cloudflare.Raw[dns.CNAMERecordType](dns.CNAMERecordType(record.Type)),
-			Content: cloudflare.F[interface{}](record.Value),
+			Content: cloudflare.String(record.Value),
 			TTL:     cloudflare.Raw[dns.TTL](dns.TTL(record.TTL)),
 			Proxied: cloudflare.Bool(c.config.Proxied),
 		}, nil
@@ -154,7 +160,7 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 	// First, try to find existing record
 	records, err := c.client.DNS.Records.List(ctx, dns.RecordListParams{
 		ZoneID: cloudflare.String(c.config.ZoneID),
-		Name:   cloudflare.String(record.Name),
+		Name:   cloudflare.F(dns.RecordListParamsName{Exact: cloudflare.String(record.Name)}),
 		Type:   cloudflare.Raw[dns.RecordListParamsType](dns.RecordListParamsType(record.Type)),
 	})
 	if err != nil {
@@ -170,7 +176,7 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 		}
 		_, err = c.client.DNS.Records.Update(ctx, existingRecord.ID, dns.RecordUpdateParams{
 			ZoneID: cloudflare.String(c.config.ZoneID),
-			Record: recordParam,
+			Body:   recordParam,
 		})
 		if err != nil {
 			return errors.NewDNSProviderError("cloudflare", record.Name, err)
@@ -191,7 +197,7 @@ func (c *CloudflareProvider) UpdateRecord(ctx context.Context, record interfaces
 	}
 	_, err = c.client.DNS.Records.New(ctx, dns.RecordNewParams{
 		ZoneID: cloudflare.String(c.config.ZoneID),
-		Record: recordParam,
+		Body:   recordParam,
 	})
 	if err != nil {
 		return errors.NewDNSProviderError("cloudflare", record.Name, err)
@@ -220,7 +226,7 @@ func (c *CloudflareProvider) GetRecord(ctx context.Context, name string, rtype s
 
 	records, err := c.client.DNS.Records.List(ctx, dns.RecordListParams{
 		ZoneID: cloudflare.String(c.config.ZoneID),
-		Name:   cloudflare.String(name),
+		Name:   cloudflare.F(dns.RecordListParamsName{Exact: cloudflare.String(name)}),
 		Type:   cloudflare.Raw[dns.RecordListParamsType](dns.RecordListParamsType(rtype)),
 	})
 	if err != nil {
@@ -233,15 +239,10 @@ func (c *CloudflareProvider) GetRecord(ctx context.Context, name string, rtype s
 
 	// Return the first matching record
 	record := records.Result[0]
-	content, ok := record.Content.(string)
-	if !ok {
-		return nil, errors.NewDNSProviderError("cloudflare", record.Name,
-			fmt.Errorf("unexpected content type %T for record", record.Content))
-	}
 	return &interfaces.DNSRecord{
 		Name:     record.Name,
 		Type:     string(record.Type),
-		Value:    content,
+		Value:    record.Content,
 		TTL:      int(record.TTL),
 		Provider: "cloudflare",
 		Metadata: map[string]string{
@@ -266,7 +267,7 @@ func (c *CloudflareProvider) DeleteRecord(ctx context.Context, name, recordType 
 
 	records, err := c.client.DNS.Records.List(ctx, dns.RecordListParams{
 		ZoneID: cloudflare.String(c.config.ZoneID),
-		Name:   cloudflare.String(name),
+		Name:   cloudflare.F(dns.RecordListParamsName{Exact: cloudflare.String(name)}),
 		Type:   cloudflare.Raw[dns.RecordListParamsType](dns.RecordListParamsType(recordType)),
 	})
 	if err != nil {
