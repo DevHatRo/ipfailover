@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.8.4](https://github.com/DevHatRo/ipfailover/compare/v0.8.3...v0.8.4) (2026-11-25)
+
+
+### Miscellaneous
+
+* refresh dependencies, Go 1.27.4, actions and Dependabot grouping ([#143](https://github.com/DevHatRo/ipfailover/issues/143)) ([8003f92](https://github.com/DevHatRo/ipfailover/commit/8003f925d552d38c28fda1bd913ad78e3b418625))
+
 ## [0.8.3](https://github.com/DevHatRo/ipfailover/compare/v0.8.2...v0.8.3) (2026-06-18)
 
 
