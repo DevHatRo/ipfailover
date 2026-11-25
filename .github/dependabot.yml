@@ -1,6 +1,6 @@
 version: 2
 updates:
-  # Enable version updates for Go modules
+  # Go modules
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
@@ -8,18 +8,22 @@ updates:
       day: "monday"
       time: "04:00"
     open-pull-requests-limit: 10
-    reviewers:
-      - "@maintainers"
-    assignees:
-      - "@maintainers"
     commit-message:
       prefix: "deps"
       include: "scope"
     labels:
       - "dependencies"
       - "go"
+    groups:
+      gomod-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      gomod-major:
+        update-types:
+          - "major"
 
-  # Enable version updates for GitHub Actions
+  # GitHub Actions
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
@@ -27,18 +31,22 @@ updates:
       day: "monday"
       time: "04:00"
     open-pull-requests-limit: 5
-    reviewers:
-      - "@maintainers"
-    assignees:
-      - "@maintainers"
     commit-message:
       prefix: "ci"
       include: "scope"
     labels:
       - "dependencies"
       - "github-actions"
+    groups:
+      github-actions-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      github-actions-major:
+        update-types:
+          - "major"
 
-  # Enable version updates for Docker
+  # Docker base image
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
@@ -46,13 +54,17 @@ updates:
       day: "monday"
       time: "04:00"
     open-pull-requests-limit: 5
-    reviewers:
-      - "@maintainers"
-    assignees:
-      - "@maintainers"
     commit-message:
       prefix: "docker"
       include: "scope"
     labels:
       - "dependencies"
       - "docker"
+    groups:
+      docker-minor-patch:
+        update-types:
+          - "minor"
+          - "patch"
+      docker-major:
+        update-types:
+          - "major"
