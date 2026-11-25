@@ -7,7 +7,7 @@ require (
 	github.com/aws/aws-sdk-go-v2/config v1.33.21
 	github.com/aws/aws-sdk-go-v2/credentials v1.21.3
 	github.com/aws/aws-sdk-go-v2/service/route53 v1.73.0
-	github.com/cloudflare/cloudflare-go/v2 v2.4.0
+	github.com/cloudflare/cloudflare-go/v7 v7.15.0
 	github.com/hetznercloud/hcloud-go/v2 v2.53.0
 	github.com/prometheus/client_golang v1.25.0
 	github.com/spf13/viper v1.21.0

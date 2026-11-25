@@ -8,8 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/cloudflare/cloudflare-go/v2"
-	"github.com/cloudflare/cloudflare-go/v2/option"
+	"github.com/cloudflare/cloudflare-go/v7"
+	"github.com/cloudflare/cloudflare-go/v7/option"
 	"github.com/devhat/ipfailover/internal/config"
 	"github.com/devhat/ipfailover/internal/dns"
 	"github.com/devhat/ipfailover/pkg/interfaces"
@@ -297,6 +297,9 @@ func TestCloudflareProvider_UpdateRecord_CreateAPIError(t *testing.T) {
 func TestCloudflareProvider_GetRecord_Found(t *testing.T) {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/zones/zone-abc/dns_records", func(w http.ResponseWriter, r *http.Request) {
+		// The lookup must be an exact name match, not a substring/prefix match.
+		assert.Equal(t, "host.example.com", r.URL.Query().Get("name.exact"))
+		assert.Equal(t, "A", r.URL.Query().Get("type"))
 		writeJSON(w, http.StatusOK, cfListResponse{
 			Result:  []cfRecord{{ID: "r1", Name: "host.example.com", Type: "A", Content: "10.0.0.1", TTL: 300}},
 			Success: true,
